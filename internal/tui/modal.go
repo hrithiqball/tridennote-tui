@@ -228,10 +228,12 @@ var helpSections = []struct {
 	title string
 	keys  [][2]string
 }{
-	{"NAVIGATE", [][2]string{{"↑ ↓  j k", "move (wraps around)"}, {"← →", "switch pane (wraps)"}, {"l h", "expand · collapse"}, {"⏎ space", "open note · toggle folder"}, {"g G", "top · bottom"}, {"tab", "switch pane"}}},
-	{"NOTES", [][2]string{{"e", "edit (preferred editor)"}, {"i", "edit in built-in editor"}, {"n", "new note"}, {"y", "copy note as markdown"}, {"m", "open diagrams as images"}, {"r", "refresh"}}},
-	{"VIEW", [][2]string{{"b", "toggle sidebar"}, {"pgup pgdn", "scroll note"}, {"w", "next workspace"}}},
+	{"NAVIGATE", [][2]string{{"↑ ↓  j k", "move (wraps around)"}, {"← →", "switch pane (wraps)"}, {"l h", "expand · collapse"}, {"⏎ space", "open note · board · folder"}, {"g G", "top · bottom"}, {"tab", "switch pane"}}},
+	{"NOTES", [][2]string{{"e", "edit (preferred editor)"}, {"i", "edit in built-in editor"}, {"n", "new note"}, {"N", "new kanban board"}, {"y", "copy note as markdown"}, {"m", "open diagrams as images"}, {"r", "refresh"}}},
+	{"VIEW", [][2]string{{"b", "toggle sidebar"}, {"v", "board ⇄ markdown"}, {"pgup pgdn", "scroll note"}, {"w", "next workspace"}}},
 	{"APP", [][2]string{{",", "settings"}, {"?", "this help"}, {"L", "log out"}, {"q", "quit"}}},
+	{"BOARD · MOVE", [][2]string{{"h l  ← →", "previous · next column"}, {"j k  ↑ ↓", "previous · next card"}, {"g G", "first · last card"}, {"H L  ⇧← ⇧→", "move card to column"}, {"J K  ⇧↑ ⇧↓", "move card down · up"}}},
+	{"BOARD · EDIT", [][2]string{{"x space", "toggle done"}, {"a n", "add card"}, {"e ⏎", "edit card"}, {"d", "delete card (d twice)"}, {"c", "add column after this"}, {"v", "show as markdown"}, {"esc q", "leave board"}}},
 }
 
 func (m Model) helpColumn(sections []int) string {
@@ -243,7 +245,7 @@ func (m Model) helpColumn(sections []int) string {
 		}
 		lines = append(lines, faintStyle.Render(section.title))
 		for _, k := range section.keys {
-			lines = append(lines, keyStyle.Render(padRight(k[0], 11))+mutedStyle.Render(k[1]))
+			lines = append(lines, keyStyle.Render(padRight(k[0], 12))+mutedStyle.Render(k[1]))
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -251,10 +253,15 @@ func (m Model) helpColumn(sections []int) string {
 
 func (m Model) helpView() string {
 	title := accentStyle.Render(m.withIcon(m.icons().Help, "Keyboard shortcuts"))
+	left, right := []int{0, 1}, []int{2, 3}
+	if m.mode == modeBoard {
+		title = accentStyle.Render(m.withIcon(m.icons().Board, "Board shortcuts"))
+		left, right = []int{4}, []int{5}
+	}
 	columns := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.helpColumn([]int{0, 1}),
+		m.helpColumn(left),
 		"    ",
-		m.helpColumn([]int{2, 3}),
+		m.helpColumn(right),
 	)
 	return modalStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, "", columns, "", faintStyle.Render("esc close")))
 }

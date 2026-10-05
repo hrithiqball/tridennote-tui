@@ -19,6 +19,7 @@ type iconSet struct {
 	Sidebar      string
 	Warn         string
 	Diagram      string
+	Board        string
 }
 
 var iconSets = map[string]iconSet{
@@ -35,6 +36,7 @@ var iconSets = map[string]iconSet{
 		Sidebar:      "",
 		Warn:         "",
 		Diagram:      "\uf0e8",
+		Board:        "\uf0db",
 	},
 	settings.IconsMinimal: {
 		Logo:     "Ψ",
@@ -46,6 +48,7 @@ var iconSets = map[string]iconSet{
 		Sidebar:  "|",
 		Warn:     "!",
 		Diagram:  "◇",
+		Board:    "▦",
 	},
 }
 

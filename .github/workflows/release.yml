@@ -26,3 +26,37 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  chocolatey:
+    needs: goreleaser
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fill in version and checksums
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          gh release download "v$version" --pattern checksums.txt --dir dist
+          $sums = @{}
+          Get-Content dist/checksums.txt | ForEach-Object {
+            $hash, $file = $_ -split '\s+', 2
+            $sums[$file] = $hash
+          }
+          $dir = 'packaging/chocolatey'
+          foreach ($path in "$dir/tridennote.nuspec", "$dir/tools/chocolateyinstall.ps1") {
+            (Get-Content $path -Raw) `
+              -replace '__VERSION__', $version `
+              -replace '__CHECKSUM_AMD64__', $sums['tridennote_windows_amd64.zip'] `
+              -replace '__CHECKSUM_ARM64__', $sums['tridennote_windows_arm64.zip'] |
+              Set-Content $path -NoNewline
+          }
+      - name: Pack and push
+        shell: pwsh
+        working-directory: packaging/chocolatey
+        env:
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        run: |
+          choco pack tridennote.nuspec
+          choco push (Get-ChildItem *.nupkg).FullName --source https://push.chocolatey.org/ --api-key $env:CHOCOLATEY_API_KEY

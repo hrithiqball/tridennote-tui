@@ -79,10 +79,15 @@ func (m *Model) refreshViewer(resetScroll bool) {
 	case !ok:
 		content = ""
 	default:
-		key := fmt.Sprintf("%s:%d", m.openID, m.viewer.Width)
+		board := m.showsBoard(m.openID)
+		key := fmt.Sprintf("%s:%d:%t", m.openID, m.viewer.Width, board)
 		rendered, cached := m.rendered[key]
 		if !cached {
-			rendered = m.renderNote(note, m.viewer.Width)
+			if board {
+				rendered = m.renderBoardPreview(note, m.openID, m.viewer.Width)
+			} else {
+				rendered = m.renderNote(note, m.viewer.Width)
+			}
 			m.rendered[key] = rendered
 		}
 		content = rendered
@@ -104,6 +109,7 @@ func (m Model) emptyViewer() string {
 		"  " + keyStyle.Render("↑ ↓") + mutedStyle.Render("  move"),
 		"  " + keyStyle.Render("⏎  ") + mutedStyle.Render("  open note"),
 		"  " + keyStyle.Render("e  ") + mutedStyle.Render("  edit · ") + keyStyle.Render("n") + mutedStyle.Render(" new · ") + keyStyle.Render("y") + mutedStyle.Render(" copy"),
+		"  " + keyStyle.Render("N  ") + mutedStyle.Render("  new kanban board · ") + keyStyle.Render("v") + mutedStyle.Render(" board ⇄ markdown"),
 		"  " + keyStyle.Render(",  ") + mutedStyle.Render("  settings · ") + keyStyle.Render("?") + mutedStyle.Render(" all shortcuts"),
 	}
 	if m.user != nil {
@@ -222,6 +228,9 @@ func (m Model) viewerContent() string {
 	if m.mode == modeEdit {
 		return m.editorView()
 	}
+	if m.mode == modeBoard {
+		return m.boardView()
+	}
 	if m.noteLoading() {
 		return "\n" + m.miniLoader(loaderNote)
 	}
@@ -255,6 +264,9 @@ func (m Model) treeView(width int) string {
 			label = node.Label() + "/"
 		} else {
 			chevron, glyph = "  ", ic.Note
+			if node.IsBoard {
+				glyph = ic.Board
+			}
 			label = node.Label()
 		}
 		row := ansi.Truncate(" "+indent+chevron+m.withIcon(glyph, label), width, "…")
@@ -286,16 +298,26 @@ func (m Model) statusBar() string {
 		keyStyle.Render("?") + " help",
 		keyStyle.Render("q") + " quit",
 	}
+	switch {
+	case m.showsBoard(m.openID):
+		hints = append([]string{keyStyle.Render("⏎") + " board", keyStyle.Render("v") + " markdown"}, hints...)
+	case m.isBoard(m.openID):
+		hints = append([]string{keyStyle.Render("v") + " board"}, hints...)
+	}
 	left := strings.Join(hints, "  ")
 	switch {
 	case m.mode == modeNewNote:
 		left = m.newNotePrompt()
+	case m.mode == modeBoard && m.boardPrompt != promptNone:
+		left = m.boardPromptView()
 	case m.renderingDiagrams:
 		left = m.miniLoader(loaderDiagram)
 	case m.err != nil:
 		left = errorStyle.Render("✕ " + m.err.Error())
 	case m.flash != "":
 		left = successStyle.Render(m.flash)
+	case m.mode == modeBoard:
+		left = m.boardHints()
 	case m.mode == modeEdit:
 		left = keyStyle.Render("ctrl+s") + " save  " + keyStyle.Render("ctrl+o") + " open in $EDITOR  " + keyStyle.Render("esc") + " close"
 	}
