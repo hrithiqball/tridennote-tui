@@ -1,6 +1,6 @@
 # tridennote (terminal)
 
-Tridennote in your terminal: notes, next level. Browse your vault in a Neovim-style tree, read notes as rendered markdown (Mermaid diagrams included), and edit them in the built-in editor or your own. Built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+Tridennote in your terminal: notes, next level. Browse your vault in a Neovim-style tree, read notes as rendered markdown (Mermaid diagrams included), run kanban boards, and edit them in the built-in editor or your own. Built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 ## Install
 
@@ -60,6 +60,9 @@ Then run `tridennote`.
 - **Note preview**: the selected note is rendered as markdown on the left.
 - **Editing**: edit notes in the built-in editor, or hand them to your own editor
   (VS Code, Neovim, …). New notes can be created from the tree.
+- **Kanban boards**: notes named `*.kanban` show up in the tree as boards and preview as
+  columns of cards. Open one to move, add, edit and check off cards; every change is saved
+  straight back to the note (see [Kanban boards](#kanban-boards)).
 
 - **Settings** (`,`): pick your editor, put the sidebar on the left or right, and choose
   Nerd Font or minimal icons. Saved to `<user config dir>/tridennote/settings.json`.
@@ -89,6 +92,53 @@ download its own. Images are shown in the terminal when [chafa](https://hpjansso
 is installed (`brew install chafa`) or with `kitten icat` in kitty/Ghostty, and otherwise
 open in your system image viewer.
 
+### Kanban boards
+
+A board is an ordinary note whose name ends in `.kanban` (the suffix is hidden in the tree),
+so the web app and any other client still see it as plain markdown:
+
+```markdown
+## Backlog
+
+- [ ] Set up CI pipeline !high #devops #ci @harith due:2026-10-10
+  - Card body lines (anything indented under a card) stay with the card
+- [ ] Write API docs
+
+## In progress
+
+## Done
+
+- [x] Fix login bug !critical
+```
+
+Each `##` heading is a column and each top-level `- [ ]` / `-` item under it is a card.
+Cards can carry inline metadata anywhere in their text: `!low` `!medium` `!high`
+`!critical` for priority, `#tags`, `@assignee` and `due:YYYY-MM-DD` (overdue dates turn
+red). Anything before the first `##` is kept as-is and shown in the markdown view.
+
+Press `N` to create a new board (it starts with Backlog, Todo, In progress and Done), or
+type a name ending in `.kanban` in the normal `n` prompt. Selecting a board shows it as
+columns; `v` flips between the board and the raw markdown. Press `enter` on a board to work
+on it:
+
+| Key                       | Action                                         |
+| ------------------------- | ---------------------------------------------- |
+| `h` `l` / `←` `→`         | Previous / next column                         |
+| `j` `k` / `↓` `↑`         | Next / previous card (`g` `G` first / last)    |
+| `H` `L` / `shift+←` `→`   | Move the card to the previous / next column    |
+| `J` `K` / `shift+↓` `↑`   | Move the card down / up within its column      |
+| `x` / `space`             | Toggle done                                    |
+| `a` / `n`                 | Add a card (metadata syntax works here)        |
+| `e` / `enter`             | Edit the card's text                           |
+| `d`                       | Delete the card (press `d` again to confirm)   |
+| `c`                       | Add a column after the focused one             |
+| `v`                       | Leave and show the markdown                    |
+| `?`                       | Board shortcuts                                |
+| `esc` / `q`               | Leave the board                                |
+
+Moving a card into the last column checks it off, and moving it out of the last column
+unchecks it. Toggling done never moves a card.
+
 The Nerd Font icons need a [Nerd Font](https://www.nerdfonts.com/) in your terminal.
 
 ## Prerequisites
@@ -112,18 +162,16 @@ Press `?` in the app for the full list.
 | `↑` `↓` / `k` `j`                 | Move through the tree (wraps around)      |
 | `←` `→`                           | Switch pane (wraps around)                |
 | `l` / `h`                         | Expand / collapse, or jump to parent      |
-| `enter` / `space`                 | Toggle folder / open note                 |
+| `enter` / `space`                 | Toggle folder / open note / work on board |
 | `e`                               | Edit in your chosen editor                |
 | `i`                               | Edit in the built-in editor               |
 | `n`                               | New note in the selected folder           |
+| `N`                               | New kanban board in the selected folder   |
+| `v`                               | Switch boards between board and markdown  |
 | `y`                               | Copy the note as markdown                 |
 | `m`                               | Open the note's diagrams as images        |
 | `b`                               | Show / hide the sidebar                   |
 | `tab`                             | Switch focus between tree and note        |
-
-Opening a note keeps focus in the tree, so you can keep arrowing through notes. `←` and `→`
-move focus between the panes wherever the sidebar is, wrapping around at either edge; with
-the note focused, `↑` `↓` scroll it.
 | `pgup` `pgdn` / `ctrl+u` `ctrl+d` | Scroll the note                           |
 | `w`                               | Next workspace                            |
 | `r`                               | Refresh                                   |
@@ -131,6 +179,10 @@ the note focused, `↑` `↓` scroll it.
 | `?`                               | Shortcut help                             |
 | `L`                               | Log out (forget the saved session)        |
 | `q` / `ctrl+c`                    | Quit                                      |
+
+Opening a note keeps focus in the tree, so you can keep arrowing through notes. `←` and `→`
+move focus between the panes wherever the sidebar is, wrapping around at either edge; with
+the note focused, `↑` `↓` scroll it.
 
 Inside the built-in editor: `ctrl+s` saves, `ctrl+o` continues in an external editor, and
 `esc` closes (pressing it twice discards unsaved changes).

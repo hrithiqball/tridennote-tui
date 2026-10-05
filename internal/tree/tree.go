@@ -5,12 +5,14 @@ import (
 	"strings"
 
 	"github.com/hrithiqball/tridennote-tui/internal/api"
+	"github.com/hrithiqball/tridennote-tui/internal/kanban"
 )
 
 type Node struct {
 	ID       string
 	Name     string
 	IsFolder bool
+	IsBoard  bool
 	Depth    int
 	Parent   *Node
 	Children []*Node
@@ -20,6 +22,9 @@ type Node struct {
 func (n *Node) Label() string {
 	if n.IsFolder {
 		return n.Name
+	}
+	if n.IsBoard {
+		return kanban.DisplayName(n.Name)
 	}
 	return n.Name + ".md"
 }
@@ -34,7 +39,8 @@ func Build(rows []api.TreeNode) []*Node {
 		if row.Kind != "folder" && !isMarkdown(row) {
 			continue
 		}
-		byID[row.ID] = &Node{ID: row.ID, Name: row.Name, IsFolder: row.Kind == "folder"}
+		folder := row.Kind == "folder"
+		byID[row.ID] = &Node{ID: row.ID, Name: row.Name, IsFolder: folder, IsBoard: !folder && kanban.IsBoardName(row.Name)}
 	}
 	var roots []*Node
 	for _, row := range rows {

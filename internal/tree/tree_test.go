@@ -57,3 +57,19 @@ func TestVisibleRespectsExpansion(t *testing.T) {
 		t.Fatalf("restore did not collapse")
 	}
 }
+
+func TestBoardsDropSuffix(t *testing.T) {
+	roots := Build([]api.TreeNode{
+		{ID: "k1", Kind: "file", FileType: s("note"), Name: "Roadmap.kanban"},
+		{ID: "f1", Kind: "folder", Name: "Team.kanban"},
+	})
+	if len(roots) != 2 {
+		t.Fatalf("got %+v", roots)
+	}
+	if roots[0].IsBoard || roots[0].Label() != "Team.kanban" {
+		t.Fatalf("folders are never boards: %+v", roots[0])
+	}
+	if !roots[1].IsBoard || roots[1].Label() != "Roadmap" || roots[1].Name != "Roadmap.kanban" {
+		t.Fatalf("board label should drop the suffix: %+v", roots[1])
+	}
+}

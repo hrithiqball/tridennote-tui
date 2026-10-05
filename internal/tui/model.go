@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/hrithiqball/tridennote-tui/internal/api"
+	"github.com/hrithiqball/tridennote-tui/internal/kanban"
 	"github.com/hrithiqball/tridennote-tui/internal/session"
 	"github.com/hrithiqball/tridennote-tui/internal/settings"
 	"github.com/hrithiqball/tridennote-tui/internal/tree"
@@ -69,6 +70,7 @@ type Model struct {
 	pending         *pendingOpen
 	nameInput       textinput.Model
 	newParent       *tree.Node
+	newBoard        bool
 	selectAfterLoad string
 	flash           string
 
@@ -78,17 +80,29 @@ type Model struct {
 	editorAvailability map[string]bool
 	sidebarHidden      bool
 	renderingDiagrams  bool
+
+	board        kanban.Board
+	boardID      string
+	boardCol     int
+	boardRow     int
+	boardFocus   focus
+	boardPrompt  boardPrompt
+	boardInput   textinput.Model
+	boardConfirm bool
+	rawBoards    bool
+	pendingSaves map[string]bool
 }
 
 func New(client *api.Client) Model {
 	return Model{
-		client:    client,
-		viewer:    viewport.New(0, 0),
-		editor:    newEditor(),
-		nameInput: newNameInput(),
-		settings:  settings.Load(),
-		notes:     map[string]api.Note{},
-		rendered:  map[string]string{},
+		client:     client,
+		viewer:     viewport.New(0, 0),
+		editor:     newEditor(),
+		nameInput:  newNameInput(),
+		boardInput: newBoardInput(),
+		settings:   settings.Load(),
+		notes:      map[string]api.Note{},
+		rendered:   map[string]string{},
 	}
 }
 
@@ -240,6 +254,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if cmd, handled := m.handleDiagramMsg(msg); handled {
 		return m, cmd
 	}
+	if cmd, handled := m.handleBoardMsg(msg); handled {
+		return m, cmd
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -343,13 +360,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = stateBrowse
 		m.err = nil
 		m.layout()
-		if m.mode == modeEdit {
+		if m.mode == modeEdit || m.mode == modeBoard {
 			return m, nil
 		}
 		return m, m.schedulePreview()
 
 	case previewTickMsg:
-		if msg.seq != m.previewSeq || m.mode == modeEdit {
+		if msg.seq != m.previewSeq || m.mode == modeEdit || m.mode == modeBoard {
 			return m, nil
 		}
 		node := m.selected()
@@ -384,6 +401,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.editor, cmd = m.editor.Update(msg)
 	case modeNewNote:
 		m.nameInput, cmd = m.nameInput.Update(msg)
+	case modeBoard:
+		if m.boardPrompt != promptNone {
+			m.boardInput, cmd = m.boardInput.Update(msg)
+		}
 	}
 	return m, cmd
 }
@@ -494,6 +515,9 @@ func (m *Model) handleBrowseKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd)
 	if m.modal != modalNone {
 		return *m, m.handleModalKey(msg)
 	}
+	if m.mode == modeBoard {
+		return *m, m.handleBoardKey(msg)
+	}
 	m.flash = ""
 	switch key {
 	case ",":
@@ -512,7 +536,12 @@ func (m *Model) handleBrowseKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd)
 		m.layout()
 		return *m, nil
 	case "n":
-		return *m, m.startNewNote()
+		return *m, m.startNewNote(false)
+	case "N":
+		return *m, m.startNewNote(true)
+	case "v":
+		m.toggleBoardView()
+		return *m, nil
 	case "m":
 		target := m.targetNote()
 		if target == "" {
@@ -569,6 +598,11 @@ func (m *Model) handleBrowseKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd)
 			return *m, nil
 		case "h", "l":
 			m.switchPane()
+			return *m, nil
+		case "enter":
+			if m.showsBoard(m.openID) {
+				return *m, m.requestBoard(m.openID)
+			}
 			return *m, nil
 		case "g", "home":
 			m.viewer.GotoTop()
@@ -631,6 +665,9 @@ func (m *Model) handleBrowseKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd)
 			node.Expanded = !node.Expanded
 			m.relayoutTree(node)
 			return *m, nil
+		}
+		if m.showsBoard(node.ID) {
+			return *m, m.requestBoard(node.ID)
 		}
 		return *m, m.open(node.ID)
 	}
