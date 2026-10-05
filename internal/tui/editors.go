@@ -60,15 +60,58 @@ func findEditor(id string) (editorOption, bool) {
 
 func systemEditorCommand() []string {
 	for _, env := range []string{"TRIDENNOTE_EDITOR", "VISUAL", "EDITOR"} {
-		if fields := strings.Fields(os.Getenv(env)); len(fields) > 0 {
+		if fields := splitCommand(os.Getenv(env)); len(fields) > 0 {
 			return withWaitFlag(fields)
 		}
 	}
 	return nil
 }
 
+func splitCommand(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if info, err := os.Stat(value); err == nil && !info.IsDir() {
+		return []string{value}
+	}
+	var fields []string
+	var current strings.Builder
+	var quote rune
+	inField := false
+	for _, r := range value {
+		switch {
+		case quote != 0 && r == quote:
+			quote = 0
+		case quote == 0 && (r == '"' || r == '\''):
+			quote = r
+			inField = true
+		case quote == 0 && (r == ' ' || r == '\t'):
+			if inField {
+				fields = append(fields, current.String())
+				current.Reset()
+				inField = false
+			}
+		default:
+			current.WriteRune(r)
+			inField = true
+		}
+	}
+	if inField {
+		fields = append(fields, current.String())
+	}
+	return fields
+}
+
 func withWaitFlag(fields []string) []string {
-	flag, ok := waitFlags[strings.TrimSuffix(filepath.Base(fields[0]), ".exe")]
+	name := strings.ToLower(fields[0])
+	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
+		name = name[i+1:]
+	}
+	for _, ext := range []string{".exe", ".cmd", ".bat"} {
+		name = strings.TrimSuffix(name, ext)
+	}
+	flag, ok := waitFlags[name]
 	if !ok {
 		return fields
 	}
