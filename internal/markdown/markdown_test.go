@@ -3,7 +3,7 @@ package markdown
 import (
 	"testing"
 
-	"tridennote/internal/api"
+	"github.com/hrithiqball/tridennote-tui/internal/api"
 )
 
 func ptr[T any](v T) *T { return &v }

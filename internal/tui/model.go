@@ -9,10 +9,10 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"tridennote/internal/api"
-	"tridennote/internal/session"
-	"tridennote/internal/settings"
-	"tridennote/internal/tree"
+	"github.com/hrithiqball/tridennote-tui/internal/api"
+	"github.com/hrithiqball/tridennote-tui/internal/session"
+	"github.com/hrithiqball/tridennote-tui/internal/settings"
+	"github.com/hrithiqball/tridennote-tui/internal/tree"
 )
 
 type state int

@@ -1,4 +1,4 @@
-module tridennote
+module github.com/hrithiqball/tridennote-tui
 
 go 1.27.1
 

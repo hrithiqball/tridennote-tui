@@ -6,14 +6,27 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"tridennote/internal/api"
-	"tridennote/internal/session"
-	"tridennote/internal/tui"
+	"github.com/hrithiqball/tridennote-tui/internal/api"
+	"github.com/hrithiqball/tridennote-tui/internal/session"
+	"github.com/hrithiqball/tridennote-tui/internal/tui"
 )
 
-var baseURL = api.DefaultBaseURL
+var (
+	baseURL = api.DefaultBaseURL
+	version = "dev"
+)
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--version", "-v", "version":
+			fmt.Println("tridennote " + version)
+			return
+		case "--help", "-h", "help":
+			fmt.Println("tridennote " + version + "\n\nNotes, next level, in your terminal.\n\nUsage:\n  tridennote            open your vault\n  tridennote --version  print the version\n\nPress ? inside the app for keyboard shortcuts.")
+			return
+		}
+	}
 	client := api.New(baseURL)
 
 	saved, err := session.Load()

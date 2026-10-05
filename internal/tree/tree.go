@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"tridennote/internal/api"
+	"github.com/hrithiqball/tridennote-tui/internal/api"
 )
 
 type Node struct {
