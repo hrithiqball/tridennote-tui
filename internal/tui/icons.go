@@ -26,7 +26,7 @@ var iconSets = map[string]iconSet{
 		FolderClosed: "",
 		FolderOpen:   "",
 		Note:         "",
-		Logo:         "\uf249",
+		Logo:         "Ψ",
 		Settings:     "",
 		Help:         "",
 		Copy:         "",
@@ -37,7 +37,7 @@ var iconSets = map[string]iconSet{
 		Diagram:      "\uf0e8",
 	},
 	settings.IconsMinimal: {
-		Logo:     "◆",
+		Logo:     "Ψ",
 		Settings: "*",
 		Help:     "?",
 		Copy:     "»",

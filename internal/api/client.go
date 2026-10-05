@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const DefaultBaseURL = "https://app.brain.pixcel.org"
+const DefaultBaseURL = "https://app.tridennote.pixcel.org"
 
 var ErrUnauthorized = errors.New("not signed in")
 
