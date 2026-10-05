@@ -26,8 +26,25 @@ version.
 go install github.com/hrithiqball/tridennote-tui/cmd/tridennote@latest
 ```
 
-**Windows**: download `tridennote_windows_amd64.zip` from the
-[releases page](https://github.com/hrithiqball/tridennote-tui/releases).
+**PowerShell** (Windows): downloads the latest release, verifies its checksum, installs to
+`%LOCALAPPDATA%\Programs\tridennote` and adds it to your user PATH
+
+```powershell
+irm https://raw.githubusercontent.com/hrithiqball/tridennote-tui/main/install.ps1 | iex
+```
+
+**Scoop** (Windows)
+
+```powershell
+scoop bucket add tridennote https://github.com/hrithiqball/scoop-bucket
+scoop install tridennote
+```
+
+Both installers accept `TRIDENNOTE_INSTALL_DIR` (PowerShell only) and `TRIDENNOTE_VERSION`
+environment variables. The zips are also on the
+[releases page](https://github.com/hrithiqball/tridennote-tui/releases). On Windows, set a
+[Nerd Font](https://www.nerdfonts.com/) in Windows Terminal or switch icons to Minimal in
+settings.
 
 Then run `tridennote`.
 
@@ -139,4 +156,6 @@ Releases are cut with git flow (`git flow release start 1.2.0` / `finish`, tags 
 `tridennote_<os>_<arch>` archives plus `checksums.txt` and publishes the GitHub release. The
 [homebrew-tap](https://github.com/hrithiqball/homebrew-tap) formula picks up the new release
 within 6 hours, or immediately with
-`gh workflow run update-formula.yml -R hrithiqball/homebrew-tap`.
+`gh workflow run update-formula.yml -R hrithiqball/homebrew-tap`; the
+[scoop-bucket](https://github.com/hrithiqball/scoop-bucket) manifest works the same way
+(`gh workflow run update-manifest.yml -R hrithiqball/scoop-bucket`).

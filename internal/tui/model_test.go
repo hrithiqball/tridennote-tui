@@ -407,6 +407,19 @@ func TestEditorCommandAddsWaitFlag(t *testing.T) {
 	if got := strings.Join(systemEditorCommand(), " "); got != "/usr/local/bin/subl -n --wait" {
 		t.Fatalf("got %q", got)
 	}
+	const vscode = `C:\Users\me\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd`
+	t.Setenv("TRIDENNOTE_EDITOR", `"`+vscode+`"`)
+	if got := systemEditorCommand(); len(got) != 2 || got[0] != vscode || got[1] != "--wait" {
+		t.Fatalf("quoted code.cmd path should stay whole and get --wait, got %q", got)
+	}
+	t.Setenv("TRIDENNOTE_EDITOR", `'/opt/My Editors/subl' -n`)
+	if got := systemEditorCommand(); len(got) != 3 || got[0] != "/opt/My Editors/subl" || got[2] != "--wait" {
+		t.Fatalf("single-quoted path with args should split correctly, got %q", got)
+	}
+	t.Setenv("TRIDENNOTE_EDITOR", "/usr/local/bin/subl -n")
+	if got := strings.Join(systemEditorCommand(), " "); got != "/usr/local/bin/subl -n --wait" {
+		t.Fatalf("got %q", got)
+	}
 }
 
 func TestSettingsModalPersistsChoices(t *testing.T) {

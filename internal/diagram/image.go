@@ -105,11 +105,11 @@ func ImageViewer(images []string) (Viewer, error) {
 	if len(images) == 0 {
 		return Viewer{}, errors.New("no diagrams to show")
 	}
-	if _, err := exec.LookPath("chafa"); err == nil {
+	if _, err := exec.LookPath("chafa"); err == nil && runtime.GOOS != "windows" {
 		args := append([]string{"-c", fmt.Sprintf(holdScript, "chafa"), "sh"}, images...)
 		return Viewer{Name: "chafa", Command: exec.Command("sh", args...), Terminal: true}, nil
 	}
-	if _, err := exec.LookPath("kitten"); err == nil && isKitty() {
+	if _, err := exec.LookPath("kitten"); err == nil && isKitty() && runtime.GOOS != "windows" {
 		args := append([]string{"-c", fmt.Sprintf(holdScript, "kitten icat"), "sh"}, images...)
 		return Viewer{Name: "kitty", Command: exec.Command("sh", args...), Terminal: true}, nil
 	}
