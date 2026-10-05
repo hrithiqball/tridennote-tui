@@ -1,0 +1,278 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+
+	"tui-cerebrum/internal/markdown"
+)
+
+const (
+	minTreeWidth = 26
+	maxTreeWidth = 42
+	treeHeader   = 2
+)
+
+var renderers = map[int]*glamour.TermRenderer{}
+
+func rendererFor(width int) *glamour.TermRenderer {
+	if r, ok := renderers[width]; ok {
+		return r
+	}
+	r, err := glamour.NewTermRenderer(glamour.WithStandardStyle("dark"), glamour.WithWordWrap(width))
+	if err != nil {
+		return nil
+	}
+	renderers[width] = r
+	return r
+}
+
+func (m Model) treeWidth() int {
+	if m.width < 60 {
+		return max(18, m.width/2)
+	}
+	return max(minTreeWidth, min(maxTreeWidth, m.width/3))
+}
+
+func (m Model) paneHeight() int {
+	return max(3, m.height-1)
+}
+
+func (m Model) treeRows() int {
+	return max(1, m.paneHeight()-2-treeHeader)
+}
+
+func (m *Model) layout() {
+	viewerWidth := m.width - m.treeWidth() - 2
+	m.viewer.Width = max(10, viewerWidth-2)
+	m.viewer.Height = max(1, m.paneHeight()-2)
+	m.ensureCursorVisible()
+	m.refreshViewer(false)
+}
+
+func (m *Model) ensureCursorVisible() {
+	rows := m.treeRows()
+	if m.cursor < m.offset {
+		m.offset = m.cursor
+	}
+	if m.cursor >= m.offset+rows {
+		m.offset = m.cursor - rows + 1
+	}
+	m.offset = max(0, min(m.offset, max(0, len(m.visible)-rows)))
+}
+
+func (m *Model) refreshViewer(resetScroll bool) {
+	if m.viewer.Width <= 0 {
+		return
+	}
+	var content string
+	switch note, ok := m.notes[m.openID]; {
+	case m.openID == "":
+		content = m.emptyViewer()
+	case !ok:
+		content = "\n  " + m.spinner.View() + mutedStyle.Render(" Loading note…")
+	default:
+		key := fmt.Sprintf("%s:%d", m.openID, m.viewer.Width)
+		rendered, cached := m.rendered[key]
+		if !cached {
+			source := "# " + note.Title + "\n\n" + markdown.FromBlocks(note.Blocks)
+			rendered = source
+			if r := rendererFor(m.viewer.Width); r != nil {
+				if out, err := r.Render(source); err == nil {
+					rendered = out
+				}
+			}
+			m.rendered[key] = rendered
+		}
+		content = rendered
+	}
+	m.viewer.SetContent(content)
+	if resetScroll {
+		m.viewer.GotoTop()
+	}
+}
+
+func (m Model) emptyViewer() string {
+	lines := []string{
+		"",
+		accentStyle.Render("  ◆ cerebrum"),
+		"",
+		mutedStyle.Render("  Pick a note from the tree on the right."),
+		"",
+		"  " + keyStyle.Render("↑ ↓") + mutedStyle.Render("  move"),
+		"  " + keyStyle.Render("→ ←") + mutedStyle.Render("  expand / collapse"),
+		"  " + keyStyle.Render("⏎  ") + mutedStyle.Render("  open note"),
+		"  " + keyStyle.Render("tab") + mutedStyle.Render("  switch pane"),
+	}
+	if m.user != nil {
+		lines = append(lines, "", faintStyle.Render("  Signed in as "+m.user.Email))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) View() string {
+	if m.width == 0 {
+		return ""
+	}
+	switch m.state {
+	case stateLogin:
+		return m.loginView()
+	case stateBrowse:
+		return m.browseView()
+	default:
+		return m.centered(m.loadingView())
+	}
+}
+
+func (m Model) centered(body string) string {
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
+}
+
+func (m Model) loadingView() string {
+	if m.err != nil {
+		return lipgloss.JoinVertical(lipgloss.Center,
+			errorStyle.Render("✕ "+m.err.Error()),
+			"",
+			mutedStyle.Render("r retry · q quit"),
+		)
+	}
+	label := "Checking your session…"
+	if m.state == stateLoading {
+		label = "Loading your vault…"
+	}
+	return m.spinner.View() + " " + mutedStyle.Render(label)
+}
+
+func (m Model) loginView() string {
+	logo := accentStyle.Render("◆ cerebrum")
+	parts := []string{logo, "", titleStyle.Render("You're not signed in"), ""}
+
+	switch {
+	case m.device == nil && m.err == nil:
+		parts = append(parts, m.spinner.View()+" "+mutedStyle.Render("Preparing a sign-in code…"))
+	case m.device != nil:
+		parts = append(parts,
+			mutedStyle.Render("Press ")+keyStyle.Render("enter")+mutedStyle.Render(" to sign in with your browser"),
+			"",
+			codeStyle.Render(m.device.UserCode),
+			"",
+			mutedStyle.Render("Make sure the browser shows this same code."),
+		)
+		status := mutedStyle.Render("Waiting for you to press enter")
+		if m.browserOpened {
+			status = m.spinner.View() + " " + mutedStyle.Render("Waiting for authorization in the browser…")
+		}
+		parts = append(parts, "", status)
+	}
+
+	if m.err != nil {
+		parts = append(parts, "", errorStyle.Render("✕ "+m.err.Error()), mutedStyle.Render("r retry"))
+	}
+
+	card := cardStyle.Render(lipgloss.JoinVertical(lipgloss.Center, parts...))
+	footer := []string{card}
+	if m.device != nil {
+		url := ansi.Truncate(m.device.VerificationURL, max(20, m.width-4), "…")
+		footer = append(footer, "", faintStyle.Render("Browser didn't open? Visit "), faintStyle.Render(url))
+	}
+	footer = append(footer, "", faintStyle.Render("q quit"))
+	return m.centered(lipgloss.JoinVertical(lipgloss.Center, footer...))
+}
+
+func (m Model) browseView() string {
+	paneHeight := m.paneHeight()
+	treeWidth := m.treeWidth()
+
+	viewerStyle, treeStyle := paneUnfocused, paneFocused
+	if m.focus == focusViewer {
+		viewerStyle, treeStyle = paneFocused, paneUnfocused
+	}
+
+	viewerPane := viewerStyle.
+		Width(m.width - treeWidth - 2).
+		Height(paneHeight - 2).
+		Render(lipgloss.NewStyle().Padding(0, 1).Render(m.viewer.View()))
+
+	treePane := treeStyle.
+		Width(treeWidth - 2).
+		Height(paneHeight - 2).
+		Render(m.treeView(treeWidth - 2))
+
+	body := lipgloss.JoinHorizontal(lipgloss.Top, viewerPane, treePane)
+	return lipgloss.JoinVertical(lipgloss.Left, body, m.statusBar())
+}
+
+func (m Model) treeView(width int) string {
+	name := "Vault"
+	if len(m.workspaces) > 0 {
+		name = m.workspaces[m.workspace].Name
+	}
+	header := accentStyle.Render(ansi.Truncate(" "+name, width, "…"))
+	lines := []string{header, faintStyle.Render(strings.Repeat("─", width))}
+
+	if len(m.visible) == 0 {
+		lines = append(lines, mutedStyle.Render(" No markdown notes yet"))
+		return strings.Join(lines, "\n")
+	}
+
+	end := min(len(m.visible), m.offset+m.treeRows())
+	for i := m.offset; i < end; i++ {
+		node := m.visible[i]
+		indent := strings.Repeat("  ", node.Depth)
+		var icon, label string
+		if node.IsFolder {
+			icon = "▸ "
+			if node.Expanded {
+				icon = "▾ "
+			}
+			label = node.Label() + "/"
+		} else {
+			icon = "  "
+			label = node.Label()
+		}
+		row := ansi.Truncate(" "+indent+icon+label, width, "…")
+		pad := strings.Repeat(" ", max(0, width-lipgloss.Width(row)))
+
+		switch {
+		case i == m.cursor && m.focus == focusTree:
+			lines = append(lines, cursorStyle.Render(row+pad))
+		case i == m.cursor:
+			lines = append(lines, cursorDimmed.Render(row+pad))
+		case node.IsFolder:
+			lines = append(lines, folderStyle.Render(row))
+		case node.ID == m.openID:
+			lines = append(lines, successStyle.Render(row))
+		default:
+			lines = append(lines, fileStyle.Render(row))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) statusBar() string {
+	hints := []string{
+		keyStyle.Render("↑↓") + " move",
+		keyStyle.Render("←→") + " fold",
+		keyStyle.Render("⏎") + " open",
+		keyStyle.Render("tab") + " pane",
+	}
+	if len(m.workspaces) > 1 {
+		hints = append(hints, keyStyle.Render("w")+" workspace")
+	}
+	hints = append(hints, keyStyle.Render("r")+" refresh", keyStyle.Render("L")+" logout", keyStyle.Render("q")+" quit")
+	left := strings.Join(hints, "  ")
+	if m.err != nil {
+		left = errorStyle.Render("✕ " + m.err.Error())
+	}
+	right := ""
+	if m.user != nil {
+		right = faintStyle.Render(m.user.Email)
+	}
+	gap := max(1, m.width-2-lipgloss.Width(left)-lipgloss.Width(right))
+	line := left + strings.Repeat(" ", gap) + right
+	return statusStyle.Render(ansi.Truncate(line, m.width-2, "…"))
+}

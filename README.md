@@ -4,9 +4,14 @@ A Terminal User Interface (TUI) application built with Go and [Bubble Tea](https
 
 ## Features
 
-- **Device Authentication**: Securely connects to your account using an OAuth-like device flow.
-- **Markdown Editor**: Simple, terminal-based markdown editor.
-- **Responsive**: Adapts to terminal window resizing.
+- **Browser sign-in**: on first launch you're prompted to sign in. Press `enter` and the
+  app opens `https://app.brain.pixcel.org` (always production, even for local builds) to
+  confirm a short code. The resulting Neon Auth session is saved to
+  `<user config dir>/cerebrum/session.json` (mode `0600`) and reused until it expires or
+  you log out.
+- **Vault tree**: a Neovim-style file tree on the right lists your folders and markdown
+  notes only (sketches, PDFs and other attachments are hidden).
+- **Note preview**: the selected note is rendered as markdown on the left.
 
 ## Prerequisites
 
@@ -14,23 +19,26 @@ A Terminal User Interface (TUI) application built with Go and [Bubble Tea](https
 
 ## Building and Running
 
-You can use the provided `Makefile` to build and run the application.
-
 ```bash
-# Build the binary
-make build
-
-# Run the application
-make run
+make build   # builds bin/tui-cerebrum
+make run     # builds and runs
+go test ./...
 ```
 
-## How to use
+## Keys
 
-1. Run the application (`make run`).
-2. The TUI will display a URL and a code.
-3. Open the URL in your browser and enter the code to authenticate.
-4. Once authenticated, the TUI will transition to the markdown editor.
-5. Press `Ctrl+C` or `Esc` to quit.
+| Key                     | Action                                      |
+| ----------------------- | ------------------------------------------- |
+| `↑` `↓` / `k` `j`       | Move through the tree (previews the note)   |
+| `→` / `l`               | Expand folder, or open note                 |
+| `←` / `h`               | Collapse folder, or jump to parent          |
+| `enter`                 | Toggle folder / open note                   |
+| `tab`                   | Switch focus between tree and note          |
+| `pgup` `pgdn` / `ctrl+u` `ctrl+d` | Scroll the note                   |
+| `w`                     | Next workspace                              |
+| `r`                     | Refresh                                     |
+| `L`                     | Log out (forget the saved session)          |
+| `q` / `ctrl+c`          | Quit                                        |
 
 ## Deployment / Distribution
 
