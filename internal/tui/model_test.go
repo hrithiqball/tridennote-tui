@@ -27,6 +27,7 @@ type fakeServer struct {
 	authorized bool
 	saved      []api.Block
 	created    map[string]any
+	board      bool
 }
 
 func (f *fakeServer) handler(t *testing.T) http.Handler {
@@ -68,15 +69,23 @@ func (f *fakeServer) handler(t *testing.T) http.Handler {
 	mux.HandleFunc("GET /api/workspaces/w1/tree", func(w http.ResponseWriter, r *http.Request) {
 		note, sketch, pdf := "note", "excalidraw", "file"
 		folder := "f1"
-		reply(w, []api.TreeNode{
+		rows := []api.TreeNode{
 			{ID: "n1", Kind: "file", FileType: &note, Name: "Daily log"},
 			{ID: "f1", Kind: "folder", Name: "Projects"},
 			{ID: "n2", Kind: "file", FileType: &note, Name: "Roadmap", ParentID: &folder},
 			{ID: "x1", Kind: "file", FileType: &sketch, Name: "Whiteboard.excalidraw", ParentID: &folder},
 			{ID: "p1", Kind: "file", FileType: &pdf, Name: "invoice.pdf"},
-		})
+		}
+		if f.board {
+			rows = append(rows, api.TreeNode{ID: "k1", Kind: "file", FileType: &note, Name: "Sprint.kanban"})
+		}
+		reply(w, rows)
 	})
 	mux.HandleFunc("GET /api/notes/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("id") == "k1" {
+			reply(w, api.Note{Title: "Sprint.kanban", Blocks: sprintBlocks()})
+			return
+		}
 		reply(w, api.Note{Title: "Roadmap", Blocks: []api.Block{
 			{ID: "b1", Type: "h2", Content: "Q4"},
 			{ID: "b2", Type: "bulleted", Content: "Ship the terminal client"},
@@ -98,7 +107,11 @@ func (f *fakeServer) handler(t *testing.T) http.Handler {
 				out[i].ID = "new-" + b.Content
 			}
 		}
-		reply(w, api.Note{Title: "Roadmap", Blocks: out})
+		title := "Roadmap"
+		if r.PathValue("id") == "k1" {
+			title = "Sprint.kanban"
+		}
+		reply(w, api.Note{Title: title, Blocks: out})
 	})
 	mux.HandleFunc("POST /api/workspaces/w1/nodes", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -612,5 +625,257 @@ func TestDiagramKeyWithoutDiagrams(t *testing.T) {
 	m, _ = step(t, m, cmd())
 	if m.flash != "No mermaid diagrams in this note" {
 		t.Fatalf("flash = %q", m.flash)
+	}
+}
+
+func sprintBlocks() []api.Block {
+	open, done := false, true
+	return []api.Block{
+		{ID: "c1", Type: "h2", Content: "Backlog"},
+		{ID: "k1a", Type: "todo", Content: "Set up CI !high #devops @harith due:2026-10-10", Checked: &open},
+		{ID: "k1b", Type: "bulleted", Content: "Use GitHub Actions", Depth: 1},
+		{ID: "k2a", Type: "bulleted", Content: "Write docs"},
+		{ID: "c2", Type: "h2", Content: "In progress"},
+		{ID: "c3", Type: "h2", Content: "Done"},
+		{ID: "k3a", Type: "todo", Content: "Fix login !critical", Checked: &done},
+	}
+}
+
+func run(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	if cmd == nil {
+		t.Fatalf("expected a command")
+	}
+	m, _ = step(t, m, cmd())
+	return m
+}
+
+func savedCard(t *testing.T, fake *fakeServer, id string) (int, api.Block) {
+	t.Helper()
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	for i, b := range fake.saved {
+		if b.ID == id {
+			return i, b
+		}
+	}
+	t.Fatalf("block %s not saved: %+v", id, fake.saved)
+	return 0, api.Block{}
+}
+
+func columnOf(t *testing.T, fake *fakeServer, id string) string {
+	t.Helper()
+	idx, _ := savedCard(t, fake, id)
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	for i := idx; i >= 0; i-- {
+		if fake.saved[i].Type == "h2" {
+			return fake.saved[i].Content
+		}
+	}
+	return ""
+}
+
+func TestKanbanBoard(t *testing.T) {
+	fake := &fakeServer{board: true}
+	m, srv := signedIn(t, fake)
+	defer srv.Close()
+
+	view := snapshot(t, "13-board-tree", m)
+	if !strings.Contains(view, "Sprint") || strings.Contains(view, "Sprint.kanban") || strings.Contains(view, "Sprint.md") {
+		t.Fatalf("board should show without its suffix:\n%s", view)
+	}
+
+	m, cmd := step(t, m, key("G"))
+	if m.selected().ID != "k1" {
+		t.Fatalf("G should select the board, got %s", m.selected().ID)
+	}
+	m, cmd = step(t, m, cmd())
+	m = run(t, m, cmd)
+	view = snapshot(t, "14-board-preview", m)
+	for _, want := range []string{"Backlog", "In progress", "Done", "Set up CI", "!high", "#devops", "@harith", "due 2026-10-10", "✓ Fix login", "≡ 1"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("board preview missing %q:\n%s", want, view)
+		}
+	}
+
+	m, _ = step(t, m, key("v"))
+	view = snapshot(t, "15-board-markdown", m)
+	if strings.Contains(view, "open board") || !strings.Contains(view, "Set up CI !high") {
+		t.Fatalf("v should show the raw markdown:\n%s", view)
+	}
+	m, _ = step(t, m, key("v"))
+
+	m, _ = step(t, m, key("enter"))
+	if m.mode != modeBoard || m.boardID != "k1" || m.focus != focusViewer {
+		t.Fatalf("enter on a board should start board mode, mode=%v", m.mode)
+	}
+	snapshot(t, "16-board-mode", m)
+
+	m, cmd = step(t, m, key("L"))
+	m = run(t, m, cmd)
+	if got := columnOf(t, fake, "k1a"); got != "In progress" {
+		t.Fatalf("L should move the card right, got %q", got)
+	}
+	if _, b := savedCard(t, fake, "k1b"); b.Depth != 1 {
+		t.Fatalf("card body should travel with the card: %+v", b)
+	}
+	if m.boardCol != 1 || m.boardRow != 0 {
+		t.Fatalf("focus should follow the card: col=%d row=%d", m.boardCol, m.boardRow)
+	}
+
+	m, cmd = step(t, m, tea.KeyMsg{Type: tea.KeyShiftRight})
+	m = run(t, m, cmd)
+	if _, b := savedCard(t, fake, "k1a"); columnOf(t, fake, "k1a") != "Done" || b.Checked == nil || !*b.Checked {
+		t.Fatalf("moving into the last column should check the card: %+v", b)
+	}
+	m, cmd = step(t, m, key("H"))
+	m = run(t, m, cmd)
+	if _, b := savedCard(t, fake, "k1a"); *b.Checked {
+		t.Fatalf("moving out of the last column should uncheck: %+v", b)
+	}
+	m, cmd = step(t, m, key("x"))
+	m = run(t, m, cmd)
+	if _, b := savedCard(t, fake, "k1a"); !*b.Checked || columnOf(t, fake, "k1a") != "In progress" {
+		t.Fatalf("x should check without moving: %+v", b)
+	}
+
+	m, _ = step(t, m, key("h"))
+	m, _ = step(t, m, key("a"))
+	m = typeText(t, m, "Triage bugs !low #qa @ana due:2026-11-01")
+	m, cmd = step(t, m, key("enter"))
+	m = run(t, m, cmd)
+	fake.mu.Lock()
+	var added api.Block
+	for _, b := range fake.saved {
+		if strings.HasPrefix(b.Content, "Triage bugs") {
+			added = b
+		}
+	}
+	fake.mu.Unlock()
+	if added.ID == "" || added.Type != "todo" || added.Content != "Triage bugs !low #qa @ana due:2026-11-01" {
+		t.Fatalf("new card should be saved with an id: %+v", added)
+	}
+	if _, b := savedCard(t, fake, "k2a"); b.Type != "todo" {
+		t.Fatalf("bulleted cards are written back as todos: %+v", b)
+	}
+
+	m, _ = step(t, m, key("e"))
+	m = typeText(t, m, " today")
+	m, cmd = step(t, m, key("enter"))
+	m = run(t, m, cmd)
+	if _, b := savedCard(t, fake, added.ID); b.Content != "Triage bugs today !low #qa @ana due:2026-11-01" {
+		t.Fatalf("edit should rewrite the card text: %+v", b)
+	}
+
+	m, cmd = step(t, m, key("d"))
+	if cmd != nil || !m.boardConfirm {
+		t.Fatalf("first d should only ask for confirmation")
+	}
+	m, cmd = step(t, m, key("d"))
+	m = run(t, m, cmd)
+	fake.mu.Lock()
+	for _, b := range fake.saved {
+		if b.ID == added.ID {
+			t.Fatalf("card should be deleted")
+		}
+	}
+	fake.mu.Unlock()
+
+	m, _ = step(t, m, key("c"))
+	m = typeText(t, m, "Review")
+	m, cmd = step(t, m, key("enter"))
+	m = run(t, m, cmd)
+	var columns []string
+	fake.mu.Lock()
+	for _, b := range fake.saved {
+		if b.Type == "h2" {
+			columns = append(columns, b.Content)
+		}
+	}
+	fake.mu.Unlock()
+	if strings.Join(columns, ",") != "Backlog,Review,In progress,Done" {
+		t.Fatalf("new column should land after the focused one: %v", columns)
+	}
+
+	m, _ = step(t, m, key("?"))
+	if view := snapshot(t, "17-board-help", m); !strings.Contains(view, "Board shortcuts") {
+		t.Fatalf("board help not shown:\n%s", view)
+	}
+	m, _ = step(t, m, key("esc"))
+	m, _ = step(t, m, key("esc"))
+	if m.mode != modeBrowse || m.focus != focusTree {
+		t.Fatalf("esc should leave board mode back to the tree")
+	}
+	if view := snapshot(t, "18-board-after", m); !strings.Contains(view, "Review") {
+		t.Fatalf("preview should show the saved board:\n%s", view)
+	}
+}
+
+func TestCreateBoard(t *testing.T) {
+	fake := &fakeServer{}
+	m, srv := signedIn(t, fake)
+	defer srv.Close()
+
+	m, _ = step(t, m, key("N"))
+	if m.mode != modeNewNote || !m.newBoard {
+		t.Fatalf("N should prompt for a board")
+	}
+	if view := snapshot(t, "19-new-board", m); !strings.Contains(view, "New board in") {
+		t.Fatalf("prompt should say board:\n%s", view)
+	}
+	m = typeText(t, m, "Launch")
+	m, cmd := step(t, m, key("enter"))
+	m, cmd = step(t, m, cmd())
+	if fake.created["name"] != "Launch.kanban" || fake.created["fileType"] != "note" {
+		t.Fatalf("unexpected create payload: %+v", fake.created)
+	}
+	if m.mode != modeBoard || m.boardID != "n9" {
+		t.Fatalf("new board should open in board mode, mode=%v", m.mode)
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected a batch")
+	}
+	for _, c := range batch {
+		if c == nil {
+			continue
+		}
+		if msg, ok := c().(boardSavedMsg); ok {
+			m, _ = step(t, m, msg)
+		}
+	}
+	var columns []string
+	for _, b := range fake.saved {
+		if b.Type != "h2" || b.ID == "" || strings.HasPrefix(b.ID, "new-") {
+			t.Fatalf("default columns should be h2 blocks with client ids: %+v", b)
+		}
+		columns = append(columns, b.Content)
+	}
+	if strings.Join(columns, ",") != "Backlog,Todo,In progress,Done" {
+		t.Fatalf("default columns wrong: %v", columns)
+	}
+}
+
+func TestEmptyBoardKeysAreSafe(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := New(api.New("http://unused"))
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	m.state = stateBrowse
+	m.notes["e1"] = api.Note{Title: "Empty.kanban"}
+	m.enterBoard("e1")
+	for _, k := range []string{"G", "g", "j", "k", "l", "h", "H", "L", "J", "K", "x", " ", "e", "d"} {
+		var cmd tea.Cmd
+		m, cmd = step(t, m, key(k))
+		if cmd != nil {
+			t.Fatalf("%q on an empty board should do nothing", k)
+		}
+	}
+	m, _ = step(t, m, key("a"))
+	if m.boardPrompt != promptNone || m.flash != "Add a column first (c)" {
+		t.Fatalf("adding a card without columns should hint, flash=%q", m.flash)
+	}
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "No columns yet") {
+		t.Fatalf("empty board should explain itself:\n%s", view)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/hrithiqball/tridennote-tui/internal/api"
+	"github.com/hrithiqball/tridennote-tui/internal/kanban"
 	"github.com/hrithiqball/tridennote-tui/internal/markdown"
 	"github.com/hrithiqball/tridennote-tui/internal/tree"
 )
@@ -23,6 +24,7 @@ const (
 	modeBrowse mode = iota
 	modeEdit
 	modeNewNote
+	modeBoard
 )
 
 type pendingAction int
@@ -32,6 +34,7 @@ const (
 	pendingEditExternal
 	pendingCopy
 	pendingDiagram
+	pendingBoard
 )
 
 type pendingOpen struct {
@@ -144,6 +147,8 @@ func (m *Model) runPending(p pendingOpen) tea.Cmd {
 		return m.requestCopy(p.id)
 	case pendingDiagram:
 		return m.requestDiagrams(p.id)
+	case pendingBoard:
+		return m.requestBoard(p.id)
 	case pendingEditExternal:
 		return m.requestEdit(p.id, true)
 	default:
@@ -224,10 +229,11 @@ func (m *Model) launchExternal(id string) tea.Cmd {
 	})
 }
 
-func (m *Model) startNewNote() tea.Cmd {
+func (m *Model) startNewNote(board bool) tea.Cmd {
 	if len(m.workspaces) == 0 {
 		return nil
 	}
+	m.newBoard = board
 	m.newParent = nil
 	if node := m.selected(); node != nil {
 		switch {
@@ -250,14 +256,21 @@ func (m *Model) createNote(name string) tea.Cmd {
 	}
 	workspaceID := m.workspaces[m.workspace].ID
 	client := m.client
-	m.flash = "Creating " + name + ".md…"
+	m.flash = "Creating " + fileLabel(name) + "…"
 	return func() tea.Msg {
 		node, err := client.CreateNote(workspaceID, parentID, name)
 		return noteCreatedMsg{node: node, err: err}
 	}
 }
 
-func (m *Model) selectByID(id string) {
+func fileLabel(name string) string {
+	if kanban.IsBoardName(name) {
+		return kanban.DisplayName(name) + " board"
+	}
+	return name + ".md"
+}
+
+func (m Model) findNode(id string) *tree.Node {
 	var find func([]*tree.Node) *tree.Node
 	find = func(nodes []*tree.Node) *tree.Node {
 		for _, n := range nodes {
@@ -270,7 +283,11 @@ func (m *Model) selectByID(id string) {
 		}
 		return nil
 	}
-	target := find(m.roots)
+	return find(m.roots)
+}
+
+func (m *Model) selectByID(id string) {
+	target := m.findNode(id)
 	if target == nil {
 		return
 	}
@@ -318,6 +335,13 @@ func (m *Model) handleNewNoteKey(msg tea.KeyMsg) tea.Cmd {
 	case "enter":
 		name := strings.TrimSpace(m.nameInput.Value())
 		name = strings.TrimSpace(strings.TrimSuffix(name, ".md"))
+		if m.newBoard || kanban.IsBoardName(name) {
+			name = strings.TrimSpace(kanban.DisplayName(name))
+			if name == "" {
+				name = "Untitled"
+			}
+			name += kanban.Extension
+		}
 		if name == "" {
 			name = "Untitled"
 		}
@@ -357,8 +381,14 @@ func (m *Model) handleEditMsg(msg tea.Msg) (tea.Cmd, bool) {
 			return nil, true
 		}
 		m.err = nil
-		m.notes[msg.node.ID] = api.Note{Title: msg.node.Name}
 		m.selectAfterLoad = msg.node.ID
+		if kanban.IsBoardName(msg.node.Name) {
+			m.notes[msg.node.ID] = api.Note{Title: msg.node.Name, Blocks: kanban.New().Blocks()}
+			m.enterBoard(msg.node.ID)
+			m.flash = "Created " + fileLabel(msg.node.Name) + " — a to add a card"
+			return tea.Batch(m.loadTree(), m.saveBoard(msg.node.ID)), true
+		}
+		m.notes[msg.node.ID] = api.Note{Title: msg.node.Name}
 		m.beginEditor(msg.node.ID)
 		m.flash = "Created " + msg.node.Name + ".md — ctrl+s to save"
 		return tea.Batch(m.loadTree(), textarea.Blink), true
@@ -409,6 +439,10 @@ func (m Model) newNotePrompt() string {
 	if m.newParent != nil {
 		where = m.newParent.Name + "/"
 	}
-	return accentStyle.Render("New note in "+where+": ") + m.nameInput.View() +
+	what := "New note"
+	if m.newBoard {
+		what = "New board"
+	}
+	return accentStyle.Render(what+" in "+where+": ") + m.nameInput.View() +
 		faintStyle.Render("   enter create · esc cancel")
 }
