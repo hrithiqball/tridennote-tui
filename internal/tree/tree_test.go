@@ -3,7 +3,7 @@ package tree
 import (
 	"testing"
 
-	"tui-cerebrum/internal/api"
+	"tridennote/internal/api"
 )
 
 func s(v string) *string { return &v }

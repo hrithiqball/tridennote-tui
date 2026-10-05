@@ -1,6 +1,6 @@
 .PHONY: build run clean build-all build-linux build-mac build-windows
 
-APP_NAME=tui-cerebrum
+APP_NAME=tridennote
 BIN_DIR=bin
 
 build:
@@ -15,7 +15,7 @@ run: build
 clean:
 	@echo "Cleaning..."
 	@rm -rf $(BIN_DIR)
-	@rm -f tui-cerebrum
+	@rm -f tui-cerebrum tridennote
 
 build-linux:
 	@echo "Building for Linux..."

@@ -15,6 +15,7 @@ type TreeNode struct {
 }
 
 type Block struct {
+	ID       string  `json:"id,omitempty"`
 	Type     string  `json:"type"`
 	Content  string  `json:"content"`
 	Checked  *bool   `json:"checked"`
@@ -45,4 +46,20 @@ func (c *Client) Tree(workspaceID string) ([]TreeNode, error) {
 
 func (c *Client) Note(nodeID string) (Note, error) {
 	return getData[Note](c, "GET", "/api/notes/"+nodeID, nil)
+}
+
+func (c *Client) SaveNote(nodeID string, blocks []Block) (Note, error) {
+	if blocks == nil {
+		blocks = []Block{}
+	}
+	return getData[Note](c, "PUT", "/api/notes/"+nodeID, map[string]any{"blocks": blocks})
+}
+
+func (c *Client) CreateNote(workspaceID string, parentID *string, name string) (TreeNode, error) {
+	return getData[TreeNode](c, "POST", "/api/workspaces/"+workspaceID+"/nodes", map[string]any{
+		"kind":     "file",
+		"fileType": "note",
+		"name":     name,
+		"parentId": parentID,
+	})
 }

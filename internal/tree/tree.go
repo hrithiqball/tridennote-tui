@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"tui-cerebrum/internal/api"
+	"tridennote/internal/api"
 )
 
 type Node struct {

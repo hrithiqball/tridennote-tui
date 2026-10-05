@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"tui-cerebrum/internal/api"
+	"tridennote/internal/api"
 )
 
 var chainingTypes = map[string]bool{"bulleted": true, "numbered": true, "todo": true}

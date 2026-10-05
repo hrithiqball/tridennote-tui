@@ -6,9 +6,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"tui-cerebrum/internal/api"
-	"tui-cerebrum/internal/session"
-	"tui-cerebrum/internal/tui"
+	"tridennote/internal/api"
+	"tridennote/internal/session"
+	"tridennote/internal/tui"
 )
 
 var baseURL = api.DefaultBaseURL
@@ -30,7 +30,7 @@ func main() {
 
 	program := tea.NewProgram(tui.New(client), tea.WithAltScreen())
 	if _, err := program.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "cerebrum: %v\n", err)
+		fmt.Fprintf(os.Stderr, "tridennote: %v\n", err)
 		os.Exit(1)
 	}
 }
