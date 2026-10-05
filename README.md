@@ -34,7 +34,7 @@ Then run `tridennote`.
 ## Features
 
 - **Browser sign-in**: on first launch you're prompted to sign in. Press `enter` and the
-  app opens `https://app.brain.pixcel.org` (always production, even for local builds) to
+  app opens `https://app.tridennote.pixcel.org` (always production, even for local builds) to
   confirm a short code. The resulting Neon Auth session is saved to
   `<user config dir>/tridennote/session.json` (mode `0600`) and reused until it expires or
   you log out.
