@@ -3,7 +3,7 @@ package tree
 import (
 	"testing"
 
-	"tridennote/internal/api"
+	"github.com/hrithiqball/tridennote-tui/internal/api"
 )
 
 func s(v string) *string { return &v }

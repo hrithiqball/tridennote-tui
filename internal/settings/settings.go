@@ -3,9 +3,9 @@ package settings
 import (
 	"encoding/json"
 	"errors"
+	"github.com/hrithiqball/tridennote-tui/internal/appdir"
 	"os"
 	"path/filepath"
-	"tridennote/internal/appdir"
 )
 
 type Settings struct {

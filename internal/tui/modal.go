@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"tridennote/internal/settings"
+	"github.com/hrithiqball/tridennote-tui/internal/settings"
 )
 
 type modal int

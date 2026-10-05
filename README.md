@@ -2,6 +2,35 @@
 
 Tridennote in your terminal: notes, next level. Browse your vault in a Neovim-style tree, read notes as rendered markdown (Mermaid diagrams included), and edit them in the built-in editor or your own. Built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
+## Install
+
+**Homebrew** (macOS / Linux)
+
+```bash
+brew install hrithiqball/tap/tridennote
+```
+
+**Install script** (macOS / Linux): downloads the latest release, verifies its checksum and
+puts `tridennote` in `/usr/local/bin` (or `~/.local/bin` if that isn't writable)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hrithiqball/tridennote-tui/main/install.sh | bash
+```
+
+Set `TRIDENNOTE_INSTALL_DIR` to choose the folder, or `TRIDENNOTE_VERSION=v1.1.0` to pin a
+version.
+
+**Go**
+
+```bash
+go install github.com/hrithiqball/tridennote-tui/cmd/tridennote@latest
+```
+
+**Windows**: download `tridennote_windows_amd64.zip` from the
+[releases page](https://github.com/hrithiqball/tridennote-tui/releases).
+
+Then run `tridennote`.
+
 ## Features
 
 - **Browser sign-in**: on first launch you're prompted to sign in. Press `enter` and the
@@ -52,7 +81,7 @@ The Nerd Font icons need a [Nerd Font](https://www.nerdfonts.com/) in your termi
 ## Building and Running
 
 ```bash
-make build   # builds bin/tridennote
+make build   # builds bin/tridennote (version from git describe)
 make run     # builds and runs
 go test ./...
 ```
@@ -102,3 +131,12 @@ make build-windows
 ```
 
 Then distribute the resulting binaries found in the `bin/` directory.
+
+## Releasing
+
+Releases are cut with git flow (`git flow release start 1.2.0` / `finish`, tags are
+`v`-prefixed). Pushing a `v*` tag runs GoReleaser in GitHub Actions, which builds
+`tridennote_<os>_<arch>` archives plus `checksums.txt` and publishes the GitHub release. The
+[homebrew-tap](https://github.com/hrithiqball/homebrew-tap) formula picks up the new release
+within 6 hours, or immediately with
+`gh workflow run update-formula.yml -R hrithiqball/homebrew-tap`.

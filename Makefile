@@ -1,12 +1,14 @@
 .PHONY: build run clean build-all build-linux build-mac build-windows
 
 APP_NAME=tridennote
+VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS=-s -w -X main.version=$(VERSION)
 BIN_DIR=bin
 
 build:
 	@echo "Building..."
 	@mkdir -p $(BIN_DIR)
-	@go build -o $(BIN_DIR)/$(APP_NAME) .
+	@go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME) ./cmd/tridennote
 
 run: build
 	@echo "Running..."
@@ -20,18 +22,18 @@ clean:
 build-linux:
 	@echo "Building for Linux..."
 	@mkdir -p $(BIN_DIR)
-	@GOOS=linux GOARCH=amd64 go build -o $(BIN_DIR)/$(APP_NAME)-linux-amd64 .
+	@GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-linux-amd64 ./cmd/tridennote
 
 build-mac:
 	@echo "Building for macOS (Apple Silicon)..."
 	@mkdir -p $(BIN_DIR)
-	@GOOS=darwin GOARCH=arm64 go build -o $(BIN_DIR)/$(APP_NAME)-darwin-arm64 .
+	@GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-darwin-arm64 ./cmd/tridennote
 	@echo "Building for macOS (Intel)..."
-	@GOOS=darwin GOARCH=amd64 go build -o $(BIN_DIR)/$(APP_NAME)-darwin-amd64 .
+	@GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-darwin-amd64 ./cmd/tridennote
 
 build-windows:
 	@echo "Building for Windows..."
 	@mkdir -p $(BIN_DIR)
-	@GOOS=windows GOARCH=amd64 go build -o $(BIN_DIR)/$(APP_NAME)-windows-amd64.exe .
+	@GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-windows-amd64.exe ./cmd/tridennote
 
 build-all: build-linux build-mac build-windows

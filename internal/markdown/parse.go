@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"tridennote/internal/api"
+	"github.com/hrithiqball/tridennote-tui/internal/api"
 )
 
 var (
