@@ -40,7 +40,7 @@ func (f *fakeServer) handler(t *testing.T) http.Handler {
 		return err == nil && c.Value == token
 	}
 	mux.HandleFunc("POST /api/device-auth/init", func(w http.ResponseWriter, r *http.Request) {
-		reply(w, api.DeviceCode{DeviceCode: "dev-1", UserCode: "WXYZ-2345", VerificationURL: "https://app.brain.pixcel.org/#/activate?code=WXYZ-2345", Interval: 3})
+		reply(w, api.DeviceCode{DeviceCode: "dev-1", UserCode: "WXYZ-2345", VerificationURL: "https://app.tridennote.pixcel.org/#/activate?code=WXYZ-2345", Interval: 3})
 	})
 	mux.HandleFunc("POST /api/device-auth/poll", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -454,7 +454,7 @@ func TestSettingsModalPersistsChoices(t *testing.T) {
 	}
 	view := snapshot(t, "8-left-sidebar", m)
 	first := strings.Split(view, "\n")[1]
-	if !strings.HasPrefix(strings.TrimLeft(first, "│ "), "◆ Personal") {
+	if !strings.HasPrefix(strings.TrimLeft(first, "│ "), "Ψ Personal") {
 		t.Fatalf("tree should render on the left with minimal icons:\n%s", first)
 	}
 
