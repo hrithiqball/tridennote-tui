@@ -4,13 +4,15 @@ import (
 	"errors"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"tui-cerebrum/internal/api"
-	"tui-cerebrum/internal/session"
-	"tui-cerebrum/internal/tree"
+	"tridennote/internal/api"
+	"tridennote/internal/session"
+	"tridennote/internal/settings"
+	"tridennote/internal/tree"
 )
 
 type state int
@@ -36,7 +38,8 @@ type Model struct {
 	height int
 	err    error
 
-	spinner spinner.Model
+	frame     int
+	animating bool
 
 	device        *api.DeviceCode
 	browserOpened bool
@@ -56,18 +59,36 @@ type Model struct {
 	openID      string
 	loadingNote string
 	previewSeq  int
+
+	mode            mode
+	editor          textarea.Model
+	editID          string
+	editBaseline    string
+	confirmDiscard  bool
+	saving          bool
+	pending         *pendingOpen
+	nameInput       textinput.Model
+	newParent       *tree.Node
+	selectAfterLoad string
+	flash           string
+
+	settings           settings.Settings
+	modal              modal
+	settingsCursor     int
+	editorAvailability map[string]bool
+	sidebarHidden      bool
+	renderingDiagrams  bool
 }
 
 func New(client *api.Client) Model {
-	sp := spinner.New()
-	sp.Spinner = spinner.MiniDot
-	sp.Style = accentStyle
 	return Model{
-		client:   client,
-		spinner:  sp,
-		viewer:   viewport.New(0, 0),
-		notes:    map[string]api.Note{},
-		rendered: map[string]string{},
+		client:    client,
+		viewer:    viewport.New(0, 0),
+		editor:    newEditor(),
+		nameInput: newNameInput(),
+		settings:  settings.Load(),
+		notes:     map[string]api.Note{},
+		rendered:  map[string]string{},
 	}
 }
 
@@ -109,7 +130,7 @@ type noteMsg struct {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, m.checkSession())
+	return m.checkSession()
 }
 
 func (m Model) checkSession() tea.Cmd {
@@ -187,20 +208,43 @@ func (m *Model) signedOut() tea.Cmd {
 	m.notes = map[string]api.Note{}
 	m.rendered = map[string]string{}
 	m.openID = ""
+	m.mode = modeBrowse
+	m.editID = ""
+	m.pending = nil
+	m.flash = ""
 	return m.startDevice()
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(animTickMsg); ok {
+		m.frame++
+		if m.needsAnimation() {
+			return m, animTick()
+		}
+		m.animating = false
+		return m, nil
+	}
+	next, cmd := m.update(msg)
+	model := next.(Model)
+	if !model.animating && model.needsAnimation() {
+		model.animating = true
+		cmd = tea.Batch(cmd, animTick())
+	}
+	return model, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if cmd, handled := m.handleEditMsg(msg); handled {
+		return m, cmd
+	}
+	if cmd, handled := m.handleDiagramMsg(msg); handled {
+		return m, cmd
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.layout()
 		return m, nil
-
-	case spinner.TickMsg:
-		var cmd tea.Cmd
-		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -292,13 +336,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor = i
 			}
 		}
+		if m.selectAfterLoad != "" {
+			m.selectByID(m.selectAfterLoad)
+			m.selectAfterLoad = ""
+		}
 		m.state = stateBrowse
 		m.err = nil
 		m.layout()
+		if m.mode == modeEdit {
+			return m, nil
+		}
 		return m, m.schedulePreview()
 
 	case previewTickMsg:
-		if msg.seq != m.previewSeq {
+		if msg.seq != m.previewSeq || m.mode == modeEdit {
 			return m, nil
 		}
 		node := m.selected()
@@ -315,12 +366,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleAPIError(msg.err)
 		}
 		m.notes[msg.id] = msg.note
-		if m.openID == msg.id {
+		if m.openID == msg.id && m.mode != modeEdit {
 			m.refreshViewer(true)
+		}
+		if m.pending != nil && m.pending.id == msg.id {
+			pending := *m.pending
+			m.pending = nil
+			m.flash = ""
+			return m, m.runPending(pending)
 		}
 		return m, nil
 	}
-	return m, nil
+
+	var cmd tea.Cmd
+	switch m.mode {
+	case modeEdit:
+		m.editor, cmd = m.editor.Update(msg)
+	case modeNewNote:
+		m.nameInput, cmd = m.nameInput.Update(msg)
+	}
+	return m, cmd
 }
 
 func (m Model) handleAPIError(err error) (tea.Model, tea.Cmd) {
@@ -381,7 +446,7 @@ func (m *Model) relayoutTree(keep *tree.Node) {
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-	if key == "ctrl+c" {
+	if key == "ctrl+c" && (m.state != stateBrowse || m.mode == modeBrowse) {
 		return *m, tea.Quit
 	}
 
@@ -420,7 +485,52 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleBrowseKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.mode {
+	case modeEdit:
+		return *m, m.handleEditKey(msg)
+	case modeNewNote:
+		return *m, m.handleNewNoteKey(msg)
+	}
+	if m.modal != modalNone {
+		return *m, m.handleModalKey(msg)
+	}
+	m.flash = ""
 	switch key {
+	case ",":
+		m.openSettings()
+		return *m, nil
+	case "?":
+		m.modal = modalHelp
+		return *m, nil
+	case "b", "ctrl+b":
+		m.sidebarHidden = !m.sidebarHidden
+		if m.sidebarHidden {
+			m.focus = focusViewer
+		} else {
+			m.focus = focusTree
+		}
+		m.layout()
+		return *m, nil
+	case "n":
+		return *m, m.startNewNote()
+	case "m":
+		target := m.targetNote()
+		if target == "" {
+			m.flash = "Select a note first"
+			return *m, nil
+		}
+		return *m, m.requestDiagrams(target)
+	case "e", "i", "y", "c":
+		target := m.targetNote()
+		if target == "" {
+			m.flash = "Select a note first, or press n for a new one"
+			return *m, nil
+		}
+		if key == "y" || key == "c" {
+			return *m, m.requestCopy(target)
+		}
+		external := key == "e" && m.settings.Editor != builtinEditor
+		return *m, m.requestEdit(target, external)
 	case "q":
 		return *m, tea.Quit
 	case "L":
@@ -439,12 +549,8 @@ func (m *Model) handleBrowseKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd)
 			return *m, m.loadTree()
 		}
 		return *m, nil
-	case "tab":
-		if m.focus == focusTree {
-			m.focus = focusViewer
-		} else {
-			m.focus = focusTree
-		}
+	case "tab", "left", "right", "ctrl+h", "ctrl+l":
+		m.switchPane()
 		return *m, nil
 	case "pgdown", "ctrl+d":
 		m.viewer.HalfPageDown()
@@ -456,8 +562,13 @@ func (m *Model) handleBrowseKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd)
 
 	if m.focus == focusViewer {
 		switch key {
-		case "esc", "left", "h":
-			m.focus = focusTree
+		case "esc":
+			if !m.sidebarHidden {
+				m.focus = focusTree
+			}
+			return *m, nil
+		case "h", "l":
+			m.switchPane()
 			return *m, nil
 		case "g", "home":
 			m.viewer.GotoTop()
@@ -474,14 +585,14 @@ func (m *Model) handleBrowseKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd)
 	node := m.selected()
 	switch key {
 	case "up", "k":
-		return *m, m.moveCursor(m.cursor - 1)
+		return *m, m.moveCursor(wrapIndex(m.cursor-1, len(m.visible)))
 	case "down", "j":
-		return *m, m.moveCursor(m.cursor + 1)
+		return *m, m.moveCursor(wrapIndex(m.cursor+1, len(m.visible)))
 	case "g", "home":
 		return *m, m.moveCursor(0)
 	case "G", "end":
 		return *m, m.moveCursor(len(m.visible) - 1)
-	case "right", "l":
+	case "l":
 		if node == nil {
 			return *m, nil
 		}
@@ -496,9 +607,8 @@ func (m *Model) handleBrowseKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd)
 			}
 			return *m, nil
 		}
-		m.focus = focusViewer
 		return *m, m.open(node.ID)
-	case "left", "h":
+	case "h":
 		if node == nil {
 			return *m, nil
 		}
@@ -522,8 +632,32 @@ func (m *Model) handleBrowseKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd)
 			m.relayoutTree(node)
 			return *m, nil
 		}
-		m.focus = focusViewer
 		return *m, m.open(node.ID)
 	}
 	return *m, nil
+}
+
+func (m Model) targetNote() string {
+	if node := m.selected(); m.focus == focusTree && !m.sidebarHidden && node != nil && !node.IsFolder {
+		return node.ID
+	}
+	return m.openID
+}
+
+func wrapIndex(i, n int) int {
+	if n == 0 {
+		return 0
+	}
+	return (i%n + n) % n
+}
+
+func (m *Model) switchPane() {
+	if m.sidebarHidden {
+		return
+	}
+	if m.focus == focusTree {
+		m.focus = focusViewer
+	} else {
+		m.focus = focusTree
+	}
 }

@@ -13,8 +13,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
-	"tui-cerebrum/internal/api"
-	"tui-cerebrum/internal/session"
+	"tridennote/internal/api"
+	"tridennote/internal/session"
 )
 
 const (
@@ -25,6 +25,8 @@ const (
 type fakeServer struct {
 	mu         sync.Mutex
 	authorized bool
+	saved      []api.Block
+	created    map[string]any
 }
 
 func (f *fakeServer) handler(t *testing.T) http.Handler {
@@ -76,10 +78,37 @@ func (f *fakeServer) handler(t *testing.T) http.Handler {
 	})
 	mux.HandleFunc("GET /api/notes/{id}", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, api.Note{Title: "Roadmap", Blocks: []api.Block{
-			{Type: "h2", Content: "Q4"},
-			{Type: "bulleted", Content: "Ship the terminal client"},
-			{Type: "bulleted", Content: "Neovim-style tree"},
+			{ID: "b1", Type: "h2", Content: "Q4"},
+			{ID: "b2", Type: "bulleted", Content: "Ship the terminal client"},
+			{ID: "b3", Type: "bulleted", Content: "Neovim-style tree"},
 		}})
+	})
+	mux.HandleFunc("PUT /api/notes/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Blocks []api.Block `json:"blocks"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.saved = body.Blocks
+		f.mu.Unlock()
+		out := make([]api.Block, len(body.Blocks))
+		for i, b := range body.Blocks {
+			out[i] = b
+			if out[i].ID == "" {
+				out[i].ID = "new-" + b.Content
+			}
+		}
+		reply(w, api.Note{Title: "Roadmap", Blocks: out})
+	})
+	mux.HandleFunc("POST /api/workspaces/w1/nodes", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.created = body
+		f.mu.Unlock()
+		note := "note"
+		w.WriteHeader(http.StatusCreated)
+		reply(w, api.TreeNode{ID: "n9", Kind: "file", FileType: &note, Name: body["name"].(string)})
 	})
 	return mux
 }
@@ -167,9 +196,9 @@ func TestSignInAndBrowse(t *testing.T) {
 		}
 	}
 
-	m, _ = step(t, m, key("right"))
+	m, _ = step(t, m, key("l"))
 	if !m.visible[0].Expanded {
-		t.Fatalf("right arrow should expand folder")
+		t.Fatalf("l should expand folder")
 	}
 	m, _ = step(t, m, key("down"))
 	if m.selected().ID != "n2" {
@@ -182,8 +211,23 @@ func TestSignInAndBrowse(t *testing.T) {
 		t.Fatalf("note content not rendered:\n%s", view)
 	}
 
-	m, _ = step(t, m, key("tab"))
-	m, _ = step(t, m, key("left"))
+	if m.focus != focusTree {
+		t.Fatalf("opening a note should keep focus in the tree")
+	}
+	m, _ = step(t, m, key("down"))
+	if m.selected().ID != "n1" {
+		t.Fatalf("down after opening should keep moving through the tree, got %s", m.selected().ID)
+	}
+	m, _ = step(t, m, key("down"))
+	if m.selected().ID != "f1" {
+		t.Fatalf("down at the bottom should wrap to the top, got %s", m.selected().ID)
+	}
+	m, _ = step(t, m, key("up"))
+	if m.selected().ID != "n1" {
+		t.Fatalf("up at the top should wrap to the bottom, got %s", m.selected().ID)
+	}
+	m, _ = step(t, m, key("up"))
+	m, _ = step(t, m, key("h"))
 	if m.selected().ID != "f1" || m.visible[0].Expanded {
 		t.Fatalf("left on a child should collapse parent and select it")
 	}
@@ -209,5 +253,351 @@ func TestExpiredSessionPromptsLogin(t *testing.T) {
 	m, _ = step(t, m, m.checkSession()())
 	if m.state != stateLogin {
 		t.Fatalf("revoked session should prompt login, got %v", m.state)
+	}
+}
+
+func signedIn(t *testing.T, fake *fakeServer) (Model, *httptest.Server) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	srv := httptest.NewServer(fake.handler(t))
+	client := api.New(srv.URL)
+	client.Token = token
+	client.CookieName = cookieName
+	m := New(client)
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	m, cmd := step(t, m, m.checkSession()())
+	m, cmd = step(t, m, cmd())
+	m, _ = step(t, m, cmd())
+	if m.state != stateBrowse {
+		t.Fatalf("expected browse state, got %v err=%v", m.state, m.err)
+	}
+	return m, srv
+}
+
+func typeText(t *testing.T, m Model, s string) Model {
+	t.Helper()
+	for _, r := range s {
+		if r == '\n' {
+			m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			continue
+		}
+		m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	return m
+}
+
+func TestEditExistingNote(t *testing.T) {
+	fake := &fakeServer{}
+	m, srv := signedIn(t, fake)
+	defer srv.Close()
+
+	m, _ = step(t, m, key("l"))
+	m, _ = step(t, m, key("down"))
+	m, cmd := step(t, m, key("e"))
+	m, cmd = step(t, m, cmd())
+	if m.mode != modeEdit || m.editID != "n2" {
+		t.Fatalf("expected editor for n2, mode=%v id=%q", m.mode, m.editID)
+	}
+	if !strings.Contains(m.editor.Value(), "- Ship the terminal client") {
+		t.Fatalf("editor should start with note markdown:\n%s", m.editor.Value())
+	}
+
+	m.editor.CursorEnd()
+	for m.editor.Line() < m.editor.LineCount()-1 {
+		m.editor.CursorDown()
+	}
+	m.editor.CursorEnd()
+	m = typeText(t, m, "\n- Edit notes from the terminal")
+	if !m.dirty() {
+		t.Fatalf("typing should mark the editor dirty")
+	}
+	snapshot(t, "4-editor", m)
+
+	m, _ = step(t, m, key("esc"))
+	if m.mode != modeEdit || !m.confirmDiscard {
+		t.Fatalf("first esc with unsaved changes should warn, not close")
+	}
+
+	m, cmd = step(t, m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	m, _ = step(t, m, cmd())
+	if m.dirty() || !strings.HasSuffix(m.flash, "Saved") {
+		t.Fatalf("save should clear dirty state, flash=%q err=%v", m.flash, m.err)
+	}
+	if len(fake.saved) != 4 {
+		t.Fatalf("expected 4 blocks saved, got %+v", fake.saved)
+	}
+	if fake.saved[0].ID != "b1" || fake.saved[1].ID != "b2" || fake.saved[3].ID != "" {
+		t.Fatalf("unchanged blocks should keep ids, new block should not: %+v", fake.saved)
+	}
+	if fake.saved[3].Content != "Edit notes from the terminal" || fake.saved[3].Type != "bulleted" {
+		t.Fatalf("new block parsed wrong: %+v", fake.saved[3])
+	}
+
+	m, _ = step(t, m, key("esc"))
+	if m.mode != modeBrowse {
+		t.Fatalf("esc after saving should close the editor")
+	}
+	if view := snapshot(t, "5-after-save", m); !strings.Contains(view, "Edit notes from the terminal") {
+		t.Fatalf("viewer should show saved content:\n%s", view)
+	}
+}
+
+func TestCreateNoteInFolder(t *testing.T) {
+	fake := &fakeServer{}
+	m, srv := signedIn(t, fake)
+	defer srv.Close()
+
+	m, _ = step(t, m, key("n"))
+	if m.mode != modeNewNote || m.newParent == nil || m.newParent.ID != "f1" {
+		t.Fatalf("n on a folder should prompt for a note inside it")
+	}
+	m = typeText(t, m, "Ideas.md")
+	snapshot(t, "6-new-note", m)
+	m, cmd := step(t, m, key("enter"))
+	m, cmd = step(t, m, cmd())
+	if fake.created["parentId"] != "f1" || fake.created["name"] != "Ideas" || fake.created["fileType"] != "note" {
+		t.Fatalf("unexpected create payload: %+v", fake.created)
+	}
+	if m.mode != modeEdit || m.editID != "n9" {
+		t.Fatalf("new note should open in the editor, mode=%v id=%q", m.mode, m.editID)
+	}
+	_ = cmd
+}
+
+func TestExternalEditorSavesChanges(t *testing.T) {
+	fake := &fakeServer{}
+	m, srv := signedIn(t, fake)
+	defer srv.Close()
+
+	m, _ = step(t, m, key("l"))
+	m, _ = step(t, m, key("down"))
+	m, cmd := step(t, m, key("enter"))
+	m, _ = step(t, m, cmd())
+
+	path := filepath.Join(t.TempDir(), "Roadmap.md")
+	baseline, _ := m.noteText("n2")
+	if err := os.WriteFile(path, []byte(baseline+"\n- Written in VS Code\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, cmd = step(t, m, externalDoneMsg{id: "n2", path: path, baseline: baseline})
+	if cmd == nil {
+		t.Fatalf("changed file should trigger a save")
+	}
+	m, _ = step(t, m, cmd())
+	if len(fake.saved) != 4 || fake.saved[3].Content != "Written in VS Code" {
+		t.Fatalf("external edit not saved: %+v", fake.saved)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("temp file should be removed")
+	}
+}
+
+func TestEditorCommandAddsWaitFlag(t *testing.T) {
+	t.Setenv("TRIDENNOTE_EDITOR", "")
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", "code")
+	if got := strings.Join(systemEditorCommand(), " "); got != "code --wait" {
+		t.Fatalf("got %q", got)
+	}
+	t.Setenv("EDITOR", "nvim")
+	if got := strings.Join(systemEditorCommand(), " "); got != "nvim" {
+		t.Fatalf("got %q", got)
+	}
+	t.Setenv("TRIDENNOTE_EDITOR", "/usr/local/bin/subl -n")
+	if got := strings.Join(systemEditorCommand(), " "); got != "/usr/local/bin/subl -n --wait" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestSettingsModalPersistsChoices(t *testing.T) {
+	fake := &fakeServer{}
+	m, srv := signedIn(t, fake)
+	defer srv.Close()
+
+	m, _ = step(t, m, key(","))
+	if m.modal != modalSettings {
+		t.Fatalf("comma should open settings")
+	}
+	snapshot(t, "7-settings", m)
+
+	rows := settingRows()
+	for i, row := range rows {
+		if row.section == "sidebar" {
+			m.settingsCursor = i
+		}
+	}
+	m, _ = step(t, m, key("enter"))
+	for i, row := range rows {
+		if row.section == "icons" {
+			m.settingsCursor = i
+		}
+	}
+	m, _ = step(t, m, key("right"))
+	m.editorAvailability["nvim"] = false
+	for i, row := range rows {
+		if row.value == "nvim" {
+			m.settingsCursor = i
+		}
+	}
+	m, _ = step(t, m, key("enter"))
+	if m.settings.Editor != "builtin" {
+		t.Fatalf("unavailable editor must not be selected, got %q", m.settings.Editor)
+	}
+	m, _ = step(t, m, key("esc"))
+	if m.modal != modalNone {
+		t.Fatalf("esc should close settings")
+	}
+
+	reloaded := New(m.client)
+	if reloaded.settings.SidebarSide != "left" || reloaded.settings.Icons != "minimal" {
+		t.Fatalf("settings not persisted: %+v", reloaded.settings)
+	}
+	view := snapshot(t, "8-left-sidebar", m)
+	first := strings.Split(view, "\n")[1]
+	if !strings.HasPrefix(strings.TrimLeft(first, "│ "), "◆ Personal") {
+		t.Fatalf("tree should render on the left with minimal icons:\n%s", first)
+	}
+
+	m, _ = step(t, m, key("right"))
+	if m.focus != focusViewer {
+		t.Fatalf("right from a left tree should focus the note")
+	}
+	m, _ = step(t, m, key("right"))
+	if m.focus != focusTree {
+		t.Fatalf("right from the rightmost pane should wrap to the tree")
+	}
+	m, _ = step(t, m, key("left"))
+	if m.focus != focusViewer {
+		t.Fatalf("left from the leftmost pane should wrap to the note")
+	}
+	m, _ = step(t, m, key("left"))
+	if m.focus != focusTree {
+		t.Fatalf("left from the note should return to a tree on the left")
+	}
+	before := m.visible[0].Expanded
+	m, _ = step(t, m, key("right"))
+	m, _ = step(t, m, key("left"))
+	if m.visible[0].Expanded != before {
+		t.Fatalf("arrows must switch panes, not fold folders")
+	}
+}
+
+func TestSidebarToggleAndCopy(t *testing.T) {
+	fake := &fakeServer{}
+	m, srv := signedIn(t, fake)
+	defer srv.Close()
+
+	var copied string
+	original := copyToClipboard
+	copyToClipboard = func(text string) error { copied = text; return nil }
+	defer func() { copyToClipboard = original }()
+
+	m, _ = step(t, m, key("l"))
+	m, _ = step(t, m, key("down"))
+	m, cmd := step(t, m, key("y"))
+	m, _ = step(t, m, cmd())
+	if !strings.Contains(copied, "- Ship the terminal client") || !strings.HasPrefix(copied, "## Q4") {
+		t.Fatalf("copy should put the note markdown on the clipboard, got %q", copied)
+	}
+	if !strings.Contains(m.flash, "Copied Roadmap.md") {
+		t.Fatalf("copy should confirm, flash=%q", m.flash)
+	}
+
+	m, _ = step(t, m, key("b"))
+	if !m.sidebarHidden || m.focus != focusViewer || m.treeWidth() != 0 {
+		t.Fatalf("b should hide the sidebar and focus the note")
+	}
+	view := snapshot(t, "9-sidebar-hidden", m)
+	if strings.Contains(view, "Projects/") {
+		t.Fatalf("tree should be hidden:\n%s", view)
+	}
+	m, _ = step(t, m, key("b"))
+	if m.sidebarHidden || m.focus != focusTree {
+		t.Fatalf("b again should restore the sidebar")
+	}
+
+	m, _ = step(t, m, key("?"))
+	if view := snapshot(t, "10-help", m); !strings.Contains(view, "Keyboard shortcuts") {
+		t.Fatalf("help modal not shown:\n%s", view)
+	}
+}
+
+func TestLoaderAnimatesOnlyWhileLoading(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	fake := &fakeServer{}
+	srv := httptest.NewServer(fake.handler(t))
+	defer srv.Close()
+	client := api.New(srv.URL)
+	client.Token = token
+	client.CookieName = cookieName
+
+	m := New(client)
+	m, cmd := step(t, m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	if !m.animating || cmd == nil {
+		t.Fatalf("boot screen should start the animation")
+	}
+	first := snapshot(t, "11-loader-a", m)
+	if !strings.Contains(first, "t r i d e n n o t e") {
+		t.Fatalf("loader should show the wordmark:\n%s", first)
+	}
+	for range 9 {
+		m, _ = step(t, m, animTickMsg{})
+	}
+	if snapshot(t, "11-loader-b", m) == first {
+		t.Fatalf("frames should differ as the pulse travels")
+	}
+	for range framesPerPhrase {
+		m, _ = step(t, m, animTickMsg{})
+	}
+	snapshot(t, "11-loader-c", m)
+	if m.phrase(loaderBoot) == (Model{frame: 9}).phrase(loaderBoot) {
+		t.Fatalf("phrase should rotate")
+	}
+
+	m, cmd = step(t, m, m.checkSession()())
+	m, cmd = step(t, m, cmd())
+	m, _ = step(t, m, cmd())
+	if m.state != stateBrowse || m.needsAnimation() {
+		t.Fatalf("idle browse should not animate")
+	}
+	m, cmd = step(t, m, animTickMsg{})
+	if cmd != nil || m.animating {
+		t.Fatalf("animation should stop once nothing is loading")
+	}
+}
+
+func TestMermaidRendersInline(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := New(api.New("http://unused"))
+	note := api.Note{Title: "Flow", Blocks: []api.Block{
+		{Type: "text", Content: "Before the diagram"},
+		{Type: "mermaid", Content: "graph TD\n  A[Write] --> B[Think]"},
+		{Type: "text", Content: "Between diagrams"},
+		{Type: "mermaid", Content: "pie title Pets\n  \"Dogs\" : 3"},
+	}}
+	out := ansi.Strip(m.renderNote(note, 70))
+	if _, err := os.Stat("/dev/null"); err == nil && os.Getenv("TUI_SNAPSHOT_DIR") != "" {
+		_ = os.WriteFile(filepath.Join(os.Getenv("TUI_SNAPSHOT_DIR"), "12-mermaid.txt"), []byte(out), 0o644)
+	}
+	for _, want := range []string{"Before the diagram", "mermaid · flowchart", "Write", "▼", "Between diagrams", "mermaid · pie", "Can't draw pie diagrams as text", "\"Dogs\" : 3"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered note missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Index(out, "Before the diagram") > strings.Index(out, "Write") || strings.Index(out, "Write") > strings.Index(out, "Between diagrams") {
+		t.Fatalf("diagram should render in place:\n%s", out)
+	}
+}
+
+func TestDiagramKeyWithoutDiagrams(t *testing.T) {
+	fake := &fakeServer{}
+	m, srv := signedIn(t, fake)
+	defer srv.Close()
+	m, _ = step(t, m, key("l"))
+	m, _ = step(t, m, key("down"))
+	m, cmd := step(t, m, key("m"))
+	m, _ = step(t, m, cmd())
+	if m.flash != "No mermaid diagrams in this note" {
+		t.Fatalf("flash = %q", m.flash)
 	}
 }

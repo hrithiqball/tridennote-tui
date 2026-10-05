@@ -7,8 +7,6 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-
-	"tui-cerebrum/internal/markdown"
 )
 
 const (
@@ -32,6 +30,9 @@ func rendererFor(width int) *glamour.TermRenderer {
 }
 
 func (m Model) treeWidth() int {
+	if m.sidebarHidden {
+		return 0
+	}
 	if m.width < 60 {
 		return max(18, m.width/2)
 	}
@@ -50,6 +51,8 @@ func (m *Model) layout() {
 	viewerWidth := m.width - m.treeWidth() - 2
 	m.viewer.Width = max(10, viewerWidth-2)
 	m.viewer.Height = max(1, m.paneHeight()-2)
+	m.editor.SetWidth(m.viewer.Width)
+	m.editor.SetHeight(max(1, m.viewer.Height-1))
 	m.ensureCursorVisible()
 	m.refreshViewer(false)
 }
@@ -74,18 +77,12 @@ func (m *Model) refreshViewer(resetScroll bool) {
 	case m.openID == "":
 		content = m.emptyViewer()
 	case !ok:
-		content = "\n  " + m.spinner.View() + mutedStyle.Render(" Loading note…")
+		content = ""
 	default:
 		key := fmt.Sprintf("%s:%d", m.openID, m.viewer.Width)
 		rendered, cached := m.rendered[key]
 		if !cached {
-			source := "# " + note.Title + "\n\n" + markdown.FromBlocks(note.Blocks)
-			rendered = source
-			if r := rendererFor(m.viewer.Width); r != nil {
-				if out, err := r.Render(source); err == nil {
-					rendered = out
-				}
-			}
+			rendered = m.renderNote(note, m.viewer.Width)
 			m.rendered[key] = rendered
 		}
 		content = rendered
@@ -97,16 +94,17 @@ func (m *Model) refreshViewer(resetScroll bool) {
 }
 
 func (m Model) emptyViewer() string {
+	side := m.settings.SidebarSide
 	lines := []string{
 		"",
-		accentStyle.Render("  ◆ cerebrum"),
+		accentStyle.Render("  " + m.withIcon(m.icons().Logo, "tridennote")),
 		"",
-		mutedStyle.Render("  Pick a note from the tree on the right."),
+		mutedStyle.Render("  Pick a note from the tree on the " + side + "."),
 		"",
 		"  " + keyStyle.Render("↑ ↓") + mutedStyle.Render("  move"),
-		"  " + keyStyle.Render("→ ←") + mutedStyle.Render("  expand / collapse"),
 		"  " + keyStyle.Render("⏎  ") + mutedStyle.Render("  open note"),
-		"  " + keyStyle.Render("tab") + mutedStyle.Render("  switch pane"),
+		"  " + keyStyle.Render("e  ") + mutedStyle.Render("  edit · ") + keyStyle.Render("n") + mutedStyle.Render(" new · ") + keyStyle.Render("y") + mutedStyle.Render(" copy"),
+		"  " + keyStyle.Render(",  ") + mutedStyle.Render("  settings · ") + keyStyle.Render("?") + mutedStyle.Render(" all shortcuts"),
 	}
 	if m.user != nil {
 		lines = append(lines, "", faintStyle.Render("  Signed in as "+m.user.Email))
@@ -122,7 +120,14 @@ func (m Model) View() string {
 	case stateLogin:
 		return m.loginView()
 	case stateBrowse:
-		return m.browseView()
+		base := m.browseView()
+		switch m.modal {
+		case modalSettings:
+			return overlay(base, m.settingsView(), m.width, m.height)
+		case modalHelp:
+			return overlay(base, m.helpView(), m.width, m.height)
+		}
+		return base
 	default:
 		return m.centered(m.loadingView())
 	}
@@ -140,20 +145,19 @@ func (m Model) loadingView() string {
 			mutedStyle.Render("r retry · q quit"),
 		)
 	}
-	label := "Checking your session…"
 	if m.state == stateLoading {
-		label = "Loading your vault…"
+		return m.loader(loaderVault)
 	}
-	return m.spinner.View() + " " + mutedStyle.Render(label)
+	return m.loader(loaderBoot)
 }
 
 func (m Model) loginView() string {
-	logo := accentStyle.Render("◆ cerebrum")
+	logo := m.wordmark()
 	parts := []string{logo, "", titleStyle.Render("You're not signed in"), ""}
 
 	switch {
 	case m.device == nil && m.err == nil:
-		parts = append(parts, m.spinner.View()+" "+mutedStyle.Render("Preparing a sign-in code…"))
+		parts = append(parts, m.miniLoader(loaderCode))
 	case m.device != nil:
 		parts = append(parts,
 			mutedStyle.Render("Press ")+keyStyle.Render("enter")+mutedStyle.Render(" to sign in with your browser"),
@@ -164,7 +168,7 @@ func (m Model) loginView() string {
 		)
 		status := mutedStyle.Render("Waiting for you to press enter")
 		if m.browserOpened {
-			status = m.spinner.View() + " " + mutedStyle.Render("Waiting for authorization in the browser…")
+			status = m.miniLoader(loaderAwaitAuth)
 		}
 		parts = append(parts, "", status)
 	}
@@ -195,15 +199,33 @@ func (m Model) browseView() string {
 	viewerPane := viewerStyle.
 		Width(m.width - treeWidth - 2).
 		Height(paneHeight - 2).
-		Render(lipgloss.NewStyle().Padding(0, 1).Render(m.viewer.View()))
+		Render(lipgloss.NewStyle().Padding(0, 1).Render(m.viewerContent()))
 
-	treePane := treeStyle.
-		Width(treeWidth - 2).
-		Height(paneHeight - 2).
-		Render(m.treeView(treeWidth - 2))
-
-	body := lipgloss.JoinHorizontal(lipgloss.Top, viewerPane, treePane)
+	var body string
+	if m.sidebarHidden {
+		body = viewerPane
+	} else {
+		treePane := treeStyle.
+			Width(treeWidth - 2).
+			Height(paneHeight - 2).
+			Render(m.treeView(treeWidth - 2))
+		if m.settings.SidebarSide == "left" {
+			body = lipgloss.JoinHorizontal(lipgloss.Top, treePane, viewerPane)
+		} else {
+			body = lipgloss.JoinHorizontal(lipgloss.Top, viewerPane, treePane)
+		}
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, body, m.statusBar())
+}
+
+func (m Model) viewerContent() string {
+	if m.mode == modeEdit {
+		return m.editorView()
+	}
+	if m.noteLoading() {
+		return "\n" + m.miniLoader(loaderNote)
+	}
+	return m.viewer.View()
 }
 
 func (m Model) treeView(width int) string {
@@ -211,7 +233,7 @@ func (m Model) treeView(width int) string {
 	if len(m.workspaces) > 0 {
 		name = m.workspaces[m.workspace].Name
 	}
-	header := accentStyle.Render(ansi.Truncate(" "+name, width, "…"))
+	header := accentStyle.Render(ansi.Truncate(" "+m.withIcon(m.icons().Logo, name), width, "…"))
 	lines := []string{header, faintStyle.Render(strings.Repeat("─", width))}
 
 	if len(m.visible) == 0 {
@@ -223,18 +245,19 @@ func (m Model) treeView(width int) string {
 	for i := m.offset; i < end; i++ {
 		node := m.visible[i]
 		indent := strings.Repeat("  ", node.Depth)
-		var icon, label string
+		ic := m.icons()
+		var chevron, glyph, label string
 		if node.IsFolder {
-			icon = "▸ "
+			chevron, glyph = "▸ ", ic.FolderClosed
 			if node.Expanded {
-				icon = "▾ "
+				chevron, glyph = "▾ ", ic.FolderOpen
 			}
 			label = node.Label() + "/"
 		} else {
-			icon = "  "
+			chevron, glyph = "  ", ic.Note
 			label = node.Label()
 		}
-		row := ansi.Truncate(" "+indent+icon+label, width, "…")
+		row := ansi.Truncate(" "+indent+chevron+m.withIcon(glyph, label), width, "…")
 		pad := strings.Repeat(" ", max(0, width-lipgloss.Width(row)))
 
 		switch {
@@ -255,18 +278,26 @@ func (m Model) treeView(width int) string {
 
 func (m Model) statusBar() string {
 	hints := []string{
-		keyStyle.Render("↑↓") + " move",
-		keyStyle.Render("←→") + " fold",
-		keyStyle.Render("⏎") + " open",
-		keyStyle.Render("tab") + " pane",
+		keyStyle.Render("e") + " edit",
+		keyStyle.Render("n") + " new",
+		keyStyle.Render("y") + " copy",
+		keyStyle.Render("b") + " sidebar",
+		keyStyle.Render(",") + " settings",
+		keyStyle.Render("?") + " help",
+		keyStyle.Render("q") + " quit",
 	}
-	if len(m.workspaces) > 1 {
-		hints = append(hints, keyStyle.Render("w")+" workspace")
-	}
-	hints = append(hints, keyStyle.Render("r")+" refresh", keyStyle.Render("L")+" logout", keyStyle.Render("q")+" quit")
 	left := strings.Join(hints, "  ")
-	if m.err != nil {
+	switch {
+	case m.mode == modeNewNote:
+		left = m.newNotePrompt()
+	case m.renderingDiagrams:
+		left = m.miniLoader(loaderDiagram)
+	case m.err != nil:
 		left = errorStyle.Render("✕ " + m.err.Error())
+	case m.flash != "":
+		left = successStyle.Render(m.flash)
+	case m.mode == modeEdit:
+		left = keyStyle.Render("ctrl+s") + " save  " + keyStyle.Render("ctrl+o") + " open in $EDITOR  " + keyStyle.Render("esc") + " close"
 	}
 	right := ""
 	if m.user != nil {

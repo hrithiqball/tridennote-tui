@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"tridennote/internal/appdir"
 )
 
 type Session struct {
@@ -14,11 +15,7 @@ type Session struct {
 }
 
 func path() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "cerebrum", "session.json"), nil
+	return appdir.File("session.json")
 }
 
 func Load() (*Session, error) {
